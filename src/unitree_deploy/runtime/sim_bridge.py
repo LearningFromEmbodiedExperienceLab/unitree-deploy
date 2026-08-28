@@ -685,6 +685,10 @@ class SimBridge:
         while self.alive:
             qpos, qvel, ctrl, gyro, acc, secondary_imu = self.state_snapshot()
             self.lowstate_pub.Write(self.make_lowstate(qpos, qvel, ctrl, gyro, acc))
+            if self.secondary_imu_pub is not None and secondary_imu is not None:
+                self.secondary_imu_pub.Write(self.make_secondary_imu(*secondary_imu))
+            if self.z1_lowstate_pub is not None:
+                self.z1_lowstate_pub.Write(self.make_z1_lowstate(qpos, qvel, ctrl))
             self.odom_pub.Write(self.make_odom(qpos, qvel, gyro, acc))
             timer.sleep()
 
@@ -792,7 +796,16 @@ class SimBridge:
 
     def cleanup(self) -> None:
         self.alive = False
-        for obj in (self.lowcmd_sub, self.lowstate_pub, self.odom_pub):
+        for obj in (
+            self.lowcmd_sub,
+            self.lowstate_pub,
+            self.secondary_imu_pub,
+            self.odom_pub,
+            self.z1_lowcmd_sub,
+            self.z1_lowstate_pub,
+        ):
+            if obj is None:
+                continue
             try:
                 obj.Close()
             except Exception:

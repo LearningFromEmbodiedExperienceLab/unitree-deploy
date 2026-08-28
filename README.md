@@ -265,3 +265,4 @@ In simulation, the mapped keys are `enter` for `A`, `\` for `Start`, `b` for
 - [ ] G1 motion tracking policy support.
 - [ ] VR teleoperation device port.
 - [ ] Check viser usability for odometry and RealSense hardware deployment.
+- [ ] Refine Z1 controller code
