@@ -6,8 +6,8 @@
 
 robot: g1
 imu_source: pelvis  # pelvis: LowState.imu_state; torso: rt/secondary_imu
-# policy_path: "policy_pelvis_base_8000.onnx"
-policy_path: "policy.onnx"
+policy_path: "./policy_stabler_torso_but_less_symmetry.onnx"
+# policy_path: "./policy_v1.onnx"
 
 policy_step_dt: 0.02
 physics_dt: 0.001
