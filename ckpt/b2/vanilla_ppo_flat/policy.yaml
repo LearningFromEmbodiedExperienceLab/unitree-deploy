@@ -1,12 +1,15 @@
 #
-# Vanilla PPO Rough Terrain Locomotion Policy
+# Loco Lab Flat Terrain Locomotion Policy
+# Vanilla PPO
+# Trained with Z RL
 #
 
-policy_path: "policy_10000.onnx"
+robot: b2
+policy_path: "policy.onnx"
 
 policy_step_dt: 0.02
-physics_dt: 0.001
-decimation: 20
+physics_dt: 0.005
+decimation: 4
 
 # Training obs joint order
 obs_joint_order: [
@@ -96,58 +99,31 @@ action_scale: [
 
 # RUN_POLICY_STATE gains in sdk_joint_order.
 kp_policy: [
-  # FR
-  25.0, 25.0, 25.0,
-  # FL
-  25.0, 25.0, 25.0,
-  # RR
-  25.0, 25.0, 25.0,
-  # RL
-  25.0, 25.0, 25.0,
+  100.0, 100.0, 100.0, 100.0,
+  100.0, 100.0, 100.0, 100.0,
+  100.0, 100.0, 100.0, 100.0,
 ]
-
 kd_policy: [
-  # FR
-  0.5, 0.5, 0.5,
-  # FL
-  0.5, 0.5, 0.5,
-  # RR
-  0.5, 0.5, 0.5,
-  # RL
-  0.5, 0.5, 0.5,
+  2.0, 2.0, 2.0, 2.0,
+  2.0, 2.0, 2.0, 2.0,
+  2.0, 2.0, 2.0, 2.0,
 ]
 
 # MOVE_TO_DEFAULT_STATE gains in sdk_joint_order.
 kp_fixed_stand: [
-  # FR
-  50.0, 50.0, 50.0,
-  # FL
-  50.0, 50.0, 50.0,
-  # RR
-  50.0, 50.0, 50.0,
-  # RL
-  50.0, 50.0, 50.0,
+  300.0, 300.0, 300.0, 300.0,
+  300.0, 300.0, 300.0, 300.0,
+  300.0, 300.0, 300.0, 300.0,
 ]
-
 kd_fixed_stand: [
-  # FR
-  1.0, 1.0, 1.0,
-  # FL
-  1.0, 1.0, 1.0,
-  # RR
-  1.0, 1.0, 1.0,
-  # RL
-  1.0, 1.0, 1.0,
+  4.0, 4.0, 4.0, 4.0,
+  4.0, 4.0, 4.0, 4.0,
+  4.0, 4.0, 4.0, 4.0,
 ]
 
 # DAMPING_STATE damping gains in sdk_joint_order. kp is always zero in damping.
 kd_damping: [
-  # FR
-  1.0, 1.0, 1.0,
-  # FL
-  1.0, 1.0, 1.0,
-  # RR
-  1.0, 1.0, 1.0,
-  # RL
-  1.0, 1.0, 1.0,
+  100.0, 100.0, 100.0, 100.0,
+  100.0, 100.0, 100.0, 100.0,
+  100.0, 100.0, 100.0, 100.0,
 ]
