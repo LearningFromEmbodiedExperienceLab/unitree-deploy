@@ -5,7 +5,7 @@
 #
 
 robot: b2
-policy_path: "policy.onnx"
+policy_path: "policy_2000_w_muon.onnx"
 
 policy_step_dt: 0.02
 physics_dt: 0.005
@@ -56,20 +56,18 @@ observation_types:
 observations:
   - type: base_ang_vel
     history_len: 5
-    scale: 0.25
   - type: projected_gravity
     history_len: 5
   - type: command
     history_len: 5
     command_range:
-      - [-1.0, 1.0]  # lin_vel_x
+      - [-1.0, 1.5]  # lin_vel_x
       - [-0.5, 0.5]  # lin_vel_y
-      - [-2.0, 2.0]  # ang_vel_yaw
+      - [-1.5, 1.5]  # ang_vel_yaw
   - type: joint_pos_rel
     history_len: 5
   - type: joint_vel
     history_len: 5
-    scale: 0.05
   - type: prev_action
     history_len: 5
 
