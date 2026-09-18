@@ -6,8 +6,7 @@
 
 robot: g1
 imu_source: pelvis  # pelvis: LowState.imu_state; torso: rt/secondary_imu
-# policy_path: "policy_v1.onnx"
-policy_path: "policy_v2_symaug.onnx"
+policy_path: "./policy_6000_w_symm_w_muon.onnx"
 
 policy_step_dt: 0.02
 physics_dt: 0.001
