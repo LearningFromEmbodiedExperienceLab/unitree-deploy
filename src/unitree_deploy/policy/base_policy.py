@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TypeAlias
 
@@ -10,7 +9,7 @@ import onnxruntime as ort
 
 from ..utils.import_utils import import_module, import_symbol
 from ..utils.yaml_utils import load_yaml
-from ..obs.observation import (
+from ..obs.base_obs import (
     ObservationBase,
     ObservationContext,
     ObservationGroup,
@@ -177,12 +176,10 @@ class BasePolicy:
 
         if observation_type == "command":
             kwargs["command_range"] = observation_spec["command_range"]
-        elif observation_type == "joint_pos_rel":
+        elif observation_type in ("joint_pos_rel", "joint_pos", "joint_vel"):
             kwargs["controlled_joint_indices"] = self.action_to_obs_indices
-            kwargs["default_q"] = self.default_joint_pos_action
-            kwargs.update(params)
-        elif observation_type in ("joint_pos", "joint_vel"):
-            kwargs["controlled_joint_indices"] = self.action_to_obs_indices
+            if observation_type == "joint_pos_rel":
+                kwargs["default_q"] = self.default_joint_pos_action
             kwargs.update(params)
         elif observation_type == "prev_action":
             kwargs["action_dim"] = self.action_dim
@@ -223,6 +220,8 @@ class BasePolicy:
         obs_vector = self.observation.compute().astype(np.float32, copy=False)
         policy_action = self._infer_action(obs_vector)
         self.action[:] = policy_action
+        # Base policies record the pre-clipping action, optionally scaled.
+        # Tracking policies replace this history with their training-time convention.
         prev_action = self.action * self.action_scaling if self.obs_use_scaled_prev_action else self.action
         self.previous_action_observation.record_action(prev_action)
         if self.action_clip is not None:
@@ -237,7 +236,6 @@ class BasePolicy:
         return self.target_q
 
 
-
 def _load_observation_types(
     module_names: Sequence[str],
     type_specs: dict[str, str],
@@ -245,6 +243,8 @@ def _load_observation_types(
 ) -> dict[str, type[ObservationBase]]:
     observation_types = {}
     for type_name, import_spec in type_specs.items():
+        if ":" not in import_spec:
+            import_spec = f"unitree_deploy.obs:{import_spec}"
         observation_cls = import_symbol(import_spec, search_dir)
         if not issubclass(observation_cls, ObservationBase):
             raise TypeError(f"observation type {type_name!r} must resolve to an ObservationBase subclass")
@@ -271,11 +271,13 @@ def load_policy(
     Optional policy.yaml fields:
       policy_class: "custom_policy:CustomPolicy"
       observation_types:
+        base_ang_vel: BaseAngularVelocityObservation
         custom_obs: "custom_observations:CustomObservation"
       observations:
         - type: custom_obs
           history_len: 1
 
+    Bare observation class names resolve in unitree_deploy.obs.
     Module names are imported with the policy YAML directory temporarily added
     to sys.path, so deployment folders can carry their own plugin files.
     """

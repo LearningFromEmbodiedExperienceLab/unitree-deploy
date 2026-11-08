@@ -13,9 +13,14 @@ viewer:
     lookat: [0.0, 0.0, 0.85]
     distance: 2.0
     elevation: -15.0
-    azimuth: 20.0
+    azimuth: 200.0
     track_body: base_link
     track_offset: [0.0, 0.0, 0.0]
+  policy_debug_viz:
+    velocity:
+      offset: [0.0, 0.0, 0.35]  # meters in base-link frame; lift arrows above the body
+      scale: 0.5  # arrow length per unit of velocity; does not scale the offset
+      width: 0.015  # meters
 
 # Order of LowState.motor_state for Unitree quadrupeds.
 state_joint_names:

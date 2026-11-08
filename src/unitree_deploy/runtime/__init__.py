@@ -1,2 +1,1 @@
-"""Runtime implementations for controller and simulation bridge."""
-
+"""Controllers, state machines, simulation, transport, and trajectory applications."""

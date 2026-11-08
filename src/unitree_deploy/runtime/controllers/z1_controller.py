@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import os
 import signal
 import subprocess
@@ -14,9 +13,8 @@ import numpy as np
 
 from unitree_deploy.config.defaults import (
     DAMPING_STATE,
-    DEFAULT_MODE,
-    DEFAULT_NET,
     LOWSTATE_TOPIC,
+    Z1_CONTROLLER_STATE_TOPIC,
     Z1_LOCAL_PORT,
     Z1_LOWCMD_TOPIC,
     Z1_LOWSTATE_TOPIC,
@@ -24,13 +22,12 @@ from unitree_deploy.config.defaults import (
     Z1_UDP_NAMESPACE,
     Z1_UDP_SERVICE_PATH,
 )
-from unitree_deploy.runtime.controller import LoopTimer
-from unitree_deploy.runtime.controller_state_machine import ControllerStateMachine
-from unitree_deploy.runtime.remote import RemoteCommand
+from unitree_deploy.runtime.timing import LoopTimer
+from unitree_deploy.runtime.state_machine import ControllerStateMachine
+from unitree_deploy.runtime.transport.remote import RemoteCommand
 from unitree_deploy.utils.terminal_status import ComponentConsole
 from unitree_deploy.utils.yaml_utils import load_yaml
 from unitree_sdk2py.core.channel import (
-    ChannelFactoryInitialize,
     ChannelPublisher,
     ChannelSubscriber,
 )
@@ -40,6 +37,7 @@ from unitree_sdk2py.idl.unitree_go.msg.dds_ import (
     MotorCmds_,
     MotorStates_,
 )
+from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
 
 
 console = ComponentConsole("z1_controller", "magenta")
@@ -137,6 +135,10 @@ class Z1Controller:
         self.lowstate_sub.Init(self.on_z1_state, 1)
         self.lowcmd_pub = ChannelPublisher(Z1_LOWCMD_TOPIC, MotorCmds_)
         self.lowcmd_pub.Init()
+        self.controller_state_pub = None
+        if config.mode == "sim":
+            self.controller_state_pub = ChannelPublisher(Z1_CONTROLLER_STATE_TOPIC, String_)
+            self.controller_state_pub.Init()
         self.base_state_sub = ChannelSubscriber(LOWSTATE_TOPIC, GoLowState_)
         self.base_state_sub.Init(self.on_base_state, 1)
         self.state_machine = ControllerStateMachine(self, self.profile.state_machine)
@@ -243,6 +245,8 @@ class Z1Controller:
             ready = self.state_ready()
             if ready:
                 self.step()
+            if self.controller_state_pub is not None:
+                self.controller_state_pub.Write(String_(self.state))
 
             now = time.perf_counter()
             if now - last_log >= 1.0:
@@ -272,6 +276,8 @@ class Z1Controller:
         self.base_state_sub.Close()
         self.lowstate_sub.Close()
         self.lowcmd_pub.Close()
+        if self.controller_state_pub is not None:
+            self.controller_state_pub.Close()
         if self.bridge_process is not None and self.bridge_process.poll() is None:
             self.bridge_process.terminate()
             try:
@@ -279,42 +285,3 @@ class Z1Controller:
             except subprocess.TimeoutExpired:
                 self.bridge_process.kill()
                 self.bridge_process.wait(timeout=2.0)
-
-
-def parse_args() -> RuntimeConfig:
-    parser = argparse.ArgumentParser(description="Unitree Z1 impedance controller over DDS.")
-    parser.add_argument("--mode", choices=("real", "sim"), default=DEFAULT_MODE)
-    parser.add_argument("--net", default=DEFAULT_NET, help="DDS network interface.")
-    parser.add_argument(
-        "--ckpt",
-        type=Path,
-        default=Path("ckpt/b2z1/b2z1_manip"),
-        help="Directory containing the Z1 policy.yaml control profile.",
-    )
-    args = parser.parse_args()
-    return RuntimeConfig(mode=args.mode, net=args.net, ckpt_dir=args.ckpt)
-
-
-def main() -> None:
-    config = parse_args()
-    if config.mode == "real":
-        console.log(
-            "WARNING: Z1 real mode will start the UDP bridge and publish motor commands.",
-            style="bold red",
-        )
-        input("Press Enter to continue...")
-
-    if config.net:
-        ChannelFactoryInitialize(0, config.net)
-    else:
-        ChannelFactoryInitialize(0)
-
-    controller = Z1Controller(config)
-    try:
-        controller.spin()
-    finally:
-        controller.cleanup()
-
-
-if __name__ == "__main__":
-    main()

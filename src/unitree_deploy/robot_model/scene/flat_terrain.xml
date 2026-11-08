@@ -1,5 +1,6 @@
 <mujoco model="flat_terrain">
   <include file="materials.xml"/>
+  <include file="origin_marker.xml"/>
 
   <worldbody>
     <light name="key_light" directional="true" diffuse="0.2 0.2 0.2" specular="0.05 0.05 0.05" pos="20 30 40" dir="-0.4 -0.6 -1" castshadow="false" cutoff="255"/>

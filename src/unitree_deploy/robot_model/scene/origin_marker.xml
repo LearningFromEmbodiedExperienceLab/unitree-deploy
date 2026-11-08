@@ -1,0 +1,8 @@
+<mujoco model="origin_marker">
+  <worldbody>
+    <!-- World origin: 0.5 m axes, X red, Y green, Z blue. Sites are visual only. -->
+    <site name="world_origin_x" type="capsule" fromto="0 0 0 0.5 0 0" size="0.008" rgba="1 0 0 1"/>
+    <site name="world_origin_y" type="capsule" fromto="0 0 0 0 0.5 0" size="0.008" rgba="0 1 0 1"/>
+    <site name="world_origin_z" type="capsule" fromto="0 0 0 0 0 0.5" size="0.008" rgba="0 0 1 1"/>
+  </worldbody>
+</mujoco>

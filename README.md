@@ -14,6 +14,8 @@ controller path on supported Unitree hardware.
 - Shared controller runtime for `sim` and `real` modes.
 - ONNX policy loading with configurable `yaml` file.
 - Multi-policy switching support.
+- G1 motion tracking with a configurable reference ghost.
+- Live MuJoCo camera export to MP4, including the reference ghost and simulation speed.
 - Template generator for custom deployment demands (such as customized obs).
 
 ## 📦 Project Layout
@@ -21,7 +23,18 @@ controller path on supported Unitree hardware.
 ```text
 src/unitree_deploy/
 ├── cli/              # console entry points
-├── runtime/          # controller and sim bridge loops
+├── runtime/
+│   ├── controllers/  # policy/Z1 control loops and checkpoint loading
+│   ├── state_machine/
+│   │   ├── machine.py   # state lifecycle and transition dispatch
+│   │   ├── config.py    # YAML, events, targets, and gains
+│   │   ├── registry.py  # state construction and transition validation
+│   │   ├── filters.py   # shared target smoothing
+│   │   └── states/      # pose, policy, and arm-transition implementations
+│   ├── simulation/   # MuJoCo bridge and keyboard input
+│   ├── transport/    # Unitree DDS adapters and remote decoding
+│   ├── trajectory/   # recording and replay applications
+│   └── timing.py     # shared loop pacing
 ├── policy/           # ONNX policy wrapper
 ├── obs/              # observation terms
 ├── visualization/    # robot state visualizer
@@ -57,10 +70,47 @@ environment.
     unitree-sim-bridge --robot g1
     ```
 
+    An in-window key guide lists movement, policy, and simulation controls.
+    Press `?` (`Shift` + `/`) to show or hide it.
     Press `T` in the MuJoCo Viewer to toggle camera tracking. Press `F12` to
-    mask or unmask MuJoCo's native keyboard shortcuts; while masked, only
-    `F12` and `T` are handled. Camera tracking requires `viewer.camera.track_body`
-    to be configured in the robot's `visualizer.yaml`.
+    unmask MuJoCo's native keyboard shortcuts (masked by default), or mask
+    them again. While masked, the viewer handles `F12`, `T`, and `?`; simulator
+    control keys, including the policy debug viz toggle, remain available. Camera tracking
+    requires `viewer.camera.track_body` to be configured in the robot's `visualizer.yaml`.
+    Scene lights follow the robot's position independently of camera tracking.
+    The current controller state and simulation speed remain visible at the top left
+    when keyboard hints are hidden. B2Z1 also shows the independent Z1 controller state.
+
+    Velocity-command policies show target/actual linear velocity in blue/cyan and
+    target/actual yaw rate in green/light green, following mjlab's arrow convention.
+    Press `G` to toggle both velocity arrows and the motion reference ghost.
+    Visibility persists across policy switches and applies to MP4 export as well.
+
+    Adjust velocity arrow placement and size under the existing `viewer` section
+    in each robot's `visualizer.yaml`:
+
+    ```yaml
+    viewer:
+      policy_debug_viz:
+        velocity:
+          offset: [0.0, 0.0, 0.3]  # base-link frame, meters; raised for Go2
+          scale: 0.5              # shared length scale for target/actual arrows
+          width: 0.015            # meters
+    ```
+
+    Defaults are `offset: [0.0, 0.0, 0.1]`, `scale: 0.5`, and `width: 0.015`.
+    The offset is independent of scale. Restart the bridge after editing;
+    MP4 export uses the same settings.
+
+    Press `=` to go faster or `-` to go slower through physics speeds `0.5x`,
+    `1x`, `2x`, `3x`, `4x`, `5x`, `6x`, `7x`, and `8x` (default: `1x`), stopping at either end.
+    The physics timestep stays fixed; the selected speed
+    appears in the bridge's terminal status and also applies after resuming
+    with `space`. In simulation, the policy controller follows the same speed
+    setting so physics and motion-reference playback advance together.
+    `Space` pauses physics, policy updates, and motion-reference playback together;
+    resume continues from the same frame. Restart both bridge and controller
+    after updating to use synchronized pause.
 
 - Run a controller against the simulator:
 
@@ -78,11 +128,65 @@ environment.
     unitree-controller --mode sim --multi-ckpt ckpt/g1/multi_ckpt.yaml
     ```
 
+- Run the bundled G1 motion-tracking profile:
+
+    ```bash
+    unitree-controller --mode sim --robot g1 \
+      --multi-ckpt ckpt/g1/tracking_lafan_dance1_subject3/multi_ckpt.yaml
+    ```
+
+    With the G1 bridge running, press `Enter` to move to the default pose, then
+    `\` to start locomotion. Press `B` to prepare the arms and enter tracking.
+    At the end of the clip, the robot holds the final reference frame; press
+    `B` again to return to locomotion. `X` enters damping.
+
+    Configure the reference ghost in the tracking profile's `multi_ckpt.yaml`:
+
+    ```yaml
+    motion_ghost:
+      enabled: true             # initial visibility of policy debug viz
+      toggle_key: g             # shared by the ghost and velocity arrows
+      color: [0.35, 0.65, 1.0]  # RGB values from 0 to 1
+      opacity: 0.25             # 0 = invisible, 1 = opaque
+    ```
+
+    These are the default color and opacity. The ghost follows the controller's
+    aligned reference pose and draws only the robot's visual meshes, with no
+    collision or dynamics. Press `G` to toggle policy debug viz without changing motion
+    playback. Ghost settings apply only in simulation.
+
+    The MuJoCo overlay shows simulation speed and keyboard hints without motion
+    details. Restart the controller after changing the YAML settings.
+
 - Start the viser visualizer:
 
     ```bash
     unitree-visualizer --mode sim --robot g1
     ```
+
+- Export the live MuJoCo camera to MP4 (requires `ffmpeg` on `PATH`):
+
+    ```bash
+    unitree-sim-bridge --robot g1 --video export/tracking.mp4 \
+      --video-width 1280 --video-height 720 --video-fps 25 \
+      --video-start 5 --video-seconds 12
+    ```
+
+    The video follows the interactive camera and includes the visible reference
+    ghost and simulation speed. Start and duration use simulation time, so pauses
+    add no duplicate frames and changing simulation speed does not change video
+    playback speed. Rendering and encoding can slow the live simulation.
+
+    | Option | Default | Meaning |
+    | --- | --- | --- |
+    | `--video` | Disabled | Output MP4 path; existing files are not overwritten. |
+    | `--video-width` | `960` | Width in pixels; a positive even integer. |
+    | `--video-height` | `540` | Height in pixels; a positive even integer. |
+    | `--video-fps` | `25` | Positive frame rate, up to the simulation rate. |
+    | `--video-start` | `0` | Start time in simulation seconds. |
+    | `--video-seconds` | Until viewer closes | Recording duration in simulation seconds. |
+
+    A simulator reset ends the recording. Closing the viewer finalizes the MP4.
 
 - Record a MuJoCo/DDS trajectory for rendering or analysis:
 
@@ -219,6 +323,17 @@ sdk_joint_order: [...]
 joint name. Reorder indices are derived automatically, so they do not need to be
 written by hand.
 
+In `observation_types`, built-in classes accept bare names; custom classes use
+`module:Class`. Existing full import paths remain supported:
+
+```yaml
+observation_types:
+  base_ang_vel: BaseAngularVelocityObservation
+  joint_pos_rel: JointPositionObservation
+  prev_action: PreviousActionObservation
+  custom_obs: "custom_observations:CustomObservation"
+```
+
 G1 policies must set `imu_source` to match training. `pelvis` reads
 `LowState.imu_state`; `torso` subscribes to `rt/secondary_imu`. The simulator
 publishes both sources for G1. Other robots must omit `imu_source` and always
@@ -262,7 +377,7 @@ In simulation, the mapped keys are `enter` for `A`, `\` for `Start`, `b` for
 ## ✅ TODO
 
 - [ ] Max torque clipping.
-- [ ] G1 motion tracking policy support.
+- [x] G1 motion tracking policy support.
 - [ ] VR teleoperation device port.
 - [ ] Check viser usability for odometry and RealSense hardware deployment.
 - [ ] Refine Z1 controller code

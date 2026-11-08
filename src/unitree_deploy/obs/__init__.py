@@ -1,5 +1,6 @@
-from .observation import (
+from .base_obs import (
     BaseAngularVelocityObservation,
+    BaseLinearVelocityObservation,
     CommandObservation,
     JointPositionObservation,
     JointVelocityObservation,
@@ -12,6 +13,7 @@ from .observation import (
 
 __all__ = [
     "BaseAngularVelocityObservation",
+    "BaseLinearVelocityObservation",
     "CommandObservation",
     "JointPositionObservation",
     "JointVelocityObservation",

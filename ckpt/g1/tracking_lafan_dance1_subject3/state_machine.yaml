@@ -1,0 +1,80 @@
+# B prepares the arms, then enters tracking with EMA on all joint targets.
+# At clip end, hold until B; return with concurrent arm interpolation and full-body EMA.
+initial: damping
+
+states:
+  damping:
+    type: damping
+    transitions:
+      A: move_to_default_qpos
+
+  move_to_default_qpos:
+    type: move_to_target_pos
+    policy: locomotion
+    target: default_q
+    duration: 2.0
+    kp: fixed_stand
+    kd: fixed_stand
+    transitions:
+      Start: locomotion
+      X: damping
+
+  locomotion:
+    type: policy
+    policy: locomotion
+    reset_policy: false  # preserve velocity history after the return transition
+    transitions:
+      B: locomotion_to_tracking
+      A: move_to_default_qpos
+      X: damping
+
+  locomotion_to_tracking:
+    type: arm_transition
+    direction: to_motion
+    enabled: true
+    locomotion_policy: locomotion
+    motion_policy: motion_tracking
+    duration: 2.0
+    max_joint_speed: 1.0
+    transitions:
+      done: motion_tracking
+      X: damping
+
+  motion_tracking:
+    type: policy
+    policy: motion_tracking
+    entry_ema:
+      frames: 20  # tracking control steps; 0 disables smoothing (10 = 0.2 s at 50 Hz)
+      alpha: 0.5  # new-target weight in (0, 1]; smaller = smoother, 1 = no filtering
+      max_arm_speed: 1.0  # rad/s; retain the preparation cap until tracking targets catch up
+    # Seed = final arm-preparation target. Each step: sent += alpha * (inferred_target - sent).
+    # After `frames` steps, send inferred targets directly; motion playback never pauses.
+    transitions:
+      done: hold_motion
+      X: damping
+
+  hold_motion:
+    type: policy
+    policy: motion_tracking
+    reset_policy: false  # preserve the final frame, heading alignment, and actor history
+    entry_ema:
+      max_arm_speed: 1.0  # preserve continuity if the clip ends before entry targets catch up
+    # Tracking inference continues; the reference cursor remains on its final frame.
+    transitions:
+      B: tracking_to_locomotion
+      X: damping
+
+  tracking_to_locomotion:
+    type: arm_transition
+    direction: to_locomotion
+    locomotion_policy: locomotion
+    motion_policy: motion_tracking
+    duration: 1.0
+    max_joint_speed: 1.0
+    entry_ema:
+      frames: 10  # starts on the first return step, alongside arm interpolation
+      alpha: 0.75  # new velocity-target weight; smaller = smoother
+    # Seed = final tracking target; legs and waist are smoothed immediately.
+    transitions:
+      done: locomotion
+      X: damping

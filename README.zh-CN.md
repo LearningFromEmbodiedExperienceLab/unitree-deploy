@@ -18,7 +18,18 @@
 ```text
 src/unitree_deploy/
 ├── cli/              # 命令行入口
-├── runtime/          # controller 与 sim bridge 主循环
+├── runtime/
+│   ├── controllers/  # policy/Z1 控制主循环与 checkpoint 加载
+│   ├── state_machine/
+│   │   ├── machine.py   # 状态生命周期与切换调度
+│   │   ├── config.py    # YAML、事件、目标姿态与增益解析
+│   │   ├── registry.py  # 状态构建与切换目标校验
+│   │   ├── filters.py   # 共用的目标平滑
+│   │   └── states/      # 姿态、policy 与手臂过渡状态实现
+│   ├── simulation/   # MuJoCo bridge 与键盘输入
+│   ├── transport/    # Unitree DDS 适配与遥控输入解码
+│   ├── trajectory/   # 轨迹录制与回放应用
+│   └── timing.py     # 共用的循环计时
 ├── policy/           # ONNX policy wrapper
 ├── obs/              # observation term
 ├── visualization/    # 机器人状态可视化
@@ -53,9 +64,35 @@ uv sync --extra viewer
 unitree-sim-bridge --robot g1
 ```
 
-MuJoCo Viewer 中按 `T` 可切换相机是否跟随机器人。按 `F12` 可切换是否
-屏蔽 MuJoCo 原生键盘快捷键；屏蔽后仅响应 `F12` 和 `T`。相机跟随功能要求
+MuJoCo Viewer 窗口内显示移动、policy 和仿真控制的按键提示。
+按 `?`（`Shift` + `/`）可显示或隐藏提示。
+默认屏蔽原生键盘快捷键。按 `F12` 可恢复，再按一次重新屏蔽。
+按 `T` 可切换相机是否跟随机器人；屏蔽期间仿真控制键和 policy 可视化开关仍有效。相机跟随功能要求
 机器人 `visualizer.yaml` 中的 `viewer.camera.track_body` 已配置。
+
+velocity command policy 运行时显示 mjlab 风格的速度箭头：蓝色/青色表示目标/实际线速度，
+绿色/浅绿色表示目标/实际 yaw 角速度。默认按 `G` 统一切换速度箭头和 motion ghost；
+显示状态在 policy 切换后保留，并同步应用于 MP4 导出。已有 `motion_ghost.toggle_key` 配置会作为两者的共同按键。
+
+速度箭头的位置和大小可在各机器人 `visualizer.yaml` 的现有 `viewer` 配置下调整：
+
+```yaml
+viewer:
+  policy_debug_viz:
+    velocity:
+      offset: [0.0, 0.0, 0.3]  # base-link 坐标系偏移，单位米；Go2 使用此高度
+      scale: 0.5              # 目标和实际速度共用的箭头长度比例
+      width: 0.015            # 箭头宽度，单位米
+```
+
+未配置时默认 `offset: [0.0, 0.0, 0.1]`、`scale: 0.5`、`width: 0.015`。
+offset 不随 scale 缩放；修改后重启 bridge 生效，视频导出使用相同配置。
+
+按 `=` 加速、`-` 减速，依次切换 `0.5x`、`1x`、`2x`、`3x`、`4x`、`5x`、`6x`、`7x`、`8x` 物理仿真速度，默认 `1x`，达到边界后不再变化。
+物理时间步长保持不变，当前倍率会显示在 bridge 终端状态中；暂停期间也可选择倍率，按 `space` 恢复后生效。
+独立 policy controller 仍使用配置的运行频率，因此这些按键会改变物理时间与 controller 更新的比例。
+`Space` 会同时暂停物理、policy 更新和 motion reference，恢复时从原来的帧继续。
+更新后请同时重启 bridge 和 controller，以启用同步暂停。
 
 启动仿真 controller：
 
@@ -193,6 +230,16 @@ sdk_joint_order: [...]
 ```
 
 `obs_joint_order`、`action_joint_order` 和 `sdk_joint_order` 会按关节名自动推导重排索引，不需要手写 index。
+
+`observation_types` 中的内置类可以直接写类名，自定义类使用 `模块名:类名`，原有的完整导入路径仍然支持：
+
+```yaml
+observation_types:
+  base_ang_vel: BaseAngularVelocityObservation
+  joint_pos_rel: JointPositionObservation
+  prev_action: PreviousActionObservation
+  custom_obs: "custom_observations:CustomObservation"
+```
 
 G1 policy 必须按训练时使用的 IMU 设置 `imu_source`。`pelvis` 读取
 `LowState.imu_state`，`torso` 订阅 `rt/secondary_imu`；G1 仿真会同时发布两路。

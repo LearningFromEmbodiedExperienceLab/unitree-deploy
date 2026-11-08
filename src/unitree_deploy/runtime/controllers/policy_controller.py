@@ -1,4 +1,3 @@
-import argparse
 import signal
 import threading
 import time
@@ -7,32 +6,37 @@ from pathlib import Path
 
 import numpy as np
 from unitree_deploy.config.defaults import (
+    CONTROLLER_STATE_TOPIC,
     DAMPING_STATE,
-    DEFAULT_MODE,
-    DEFAULT_NET,
     HG_MODE_MACHINE,
     HG_MODE_PR,
+    ODOM_TOPIC,
     RUN_POLICY_STATE,
+    SIM_PAUSE_TOPIC,
+    SIM_SPEED_TOPIC,
     WIRELESS_REMOTE_BUTTON_BITS,
     sim_key_for_button,
 )
-from unitree_deploy.obs.observation import ObservationContext
+from unitree_deploy.obs.base_obs import ObservationContext
 from unitree_deploy.robot_model.robot_config import DEFAULT_ROBOT
-from unitree_deploy.runtime.multi_ckpt import PolicyManager
-from unitree_deploy.runtime.remote import RemoteCommand
-from unitree_deploy.runtime.controller_state_machine import (
+from unitree_deploy.visualization.policy_debug_viz import POLICY_DEBUG_VIZ_TOPIC, policy_debug_viz_packet
+from unitree_deploy.utils.yaml_utils import load_yaml
+from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
+from unitree_deploy.runtime.controllers.checkpoints import PolicyManager
+from unitree_deploy.runtime.timing import LoopTimer
+from unitree_deploy.runtime.transport.remote import RemoteCommand
+from unitree_deploy.runtime.state_machine import (
     ControllerStateMachine,
     load_state_machine_config,
     resolve_state_machine_path,
 )
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
 from unitree_sdk2py.core.channel import (
-    ChannelFactoryInitialize,
     ChannelPublisher,
     ChannelSubscriber,
 )
 from unitree_sdk2py.utils.crc import CRC
-from unitree_deploy.runtime.unitree_dds import resolve_low_level_dds
+from unitree_deploy.runtime.transport.dds import resolve_low_level_dds
 from unitree_deploy.utils.terminal_status import ComponentConsole
 
 
@@ -45,20 +49,6 @@ def log(message: str) -> None:
 
 def status(fields) -> None:
     console.status(fields)
-
-
-class LoopTimer:
-    def __init__(self, dt: float):
-        self.dt = float(dt)
-        self.next_t = time.perf_counter() + self.dt
-
-    def sleep(self) -> None:
-        now = time.perf_counter()
-        if self.next_t > now:
-            time.sleep(self.next_t - now)
-            self.next_t += self.dt
-        else:
-            self.next_t = now + self.dt
 
 
 @dataclass(frozen=True)
@@ -112,6 +102,9 @@ class Controller:
         self.torso_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
         self.torso_gyro = np.zeros(3, dtype=np.float64)
         self.has_torso_imu = False
+        self.base_pos_w = np.zeros(3)
+        self.base_lin_vel_w = np.zeros(3)
+        self.odom_received_at = None
         self.command = self.active_profile.command_default.copy()
         self.last_policy_command = self.active_profile.command_default.copy()
         self.remote = RemoteCommand()
@@ -138,14 +131,47 @@ class Controller:
                 self.dds.secondary_imu_type,
             )
             self.secondary_imu_sub.Init(self.on_secondary_imu, 1)
+        self.odom_sub = None
+        # Sim references need the entry position even when the actor does not use odometry.
+        if config.mode == "sim" or any(
+            getattr(profile.policy, "requires_odometry", False)
+            for profile in self.policy_manager.profiles.values()
+        ):
+            from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+
+            self.odom_sub = ChannelSubscriber(ODOM_TOPIC, SportModeState_)
+            self.odom_sub.Init(self.on_odometry, 1)
         self.lowcmd_pub = ChannelPublisher(self.lowcmd_topic, self.dds.lowcmd_type)
         self.lowcmd_pub.Init()
+
+        self.controller_state_pub = None
+        if config.mode == "sim":
+            self.controller_state_pub = ChannelPublisher(CONTROLLER_STATE_TOPIC, String_)
+            self.controller_state_pub.Init()
+
+        self.policy_debug_viz_pub = None
+        self.motion_ghost_settings = {}
+        if config.mode == "sim":
+            if config.multi_ckpt is not None:
+                self.motion_ghost_settings = load_yaml(config.multi_ckpt).get("motion_ghost") or {}
+            self.policy_debug_viz_pub = ChannelPublisher(POLICY_DEBUG_VIZ_TOPIC, String_)
+            self.policy_debug_viz_pub.Init()
 
         signal.signal(signal.SIGINT, self.close)
         signal.signal(signal.SIGTERM, self.close)
 
         self.state_machine = ControllerStateMachine(self, state_machine_config)
         self.state = self.state_machine.current_name
+        self.simulation_paused = config.mode == "sim"
+        self.simulation_pause_started = time.perf_counter() if self.simulation_paused else None
+        self.simulation_speed = 1.0
+        self.simulation_speed_sub = None
+        self.simulation_pause_sub = None
+        if config.mode == "sim":
+            self.simulation_pause_sub = ChannelSubscriber(SIM_PAUSE_TOPIC, String_)
+            self.simulation_pause_sub.Init(self.on_simulation_pause, 1)
+            self.simulation_speed_sub = ChannelSubscriber(SIM_SPEED_TOPIC, String_)
+            self.simulation_speed_sub.Init(self.on_simulation_speed, 1)
 
     @property
     def active_profile(self):
@@ -187,6 +213,20 @@ class Controller:
 
     # ----- DDS input and controller state snapshot -----
 
+    def on_simulation_speed(self, msg) -> None:
+        with self.lock:
+            self.simulation_speed = float(msg.data)
+
+    def on_simulation_pause(self, msg) -> None:
+        paused = msg.data == "paused"
+        with self.lock:
+            if paused and not self.simulation_paused:
+                self.simulation_pause_started = time.perf_counter()
+            elif not paused and self.simulation_paused:
+                self.state_enter_t += time.perf_counter() - self.simulation_pause_started
+                self.simulation_pause_started = None
+            self.simulation_paused = paused
+
     def on_lowstate(self, msg) -> None:
         with self.lock:
             self.mode_machine = int(getattr(msg, "mode_machine", HG_MODE_MACHINE))
@@ -209,6 +249,13 @@ class Controller:
             self.torso_gyro[:] = np.asarray(msg.gyroscope[:3], dtype=np.float64)
             self.has_torso_imu = True
 
+    def on_odometry(self, msg) -> None:
+        # rt/odommodestate: pelvis position and linear velocity in the IMU world frame.
+        with self.lock:
+            self.base_pos_w[:] = msg.position[:3]
+            self.base_lin_vel_w[:] = msg.velocity[:3]
+            self.odom_received_at = time.perf_counter()
+
     def observation(self) -> ObservationContext:
         with self.lock:
             profile = self.active_profile
@@ -220,12 +267,20 @@ class Controller:
             else:
                 quat = self.quat.copy()
                 gyro = self.gyro.copy()
+            # Allow five policy steps of latency, with a 100 ms minimum window.
+            odom_timeout = max(0.1, 5 * profile.policy.policy_step_dt)
+            odom_fresh = (
+                self.odom_received_at is not None
+                and time.perf_counter() - self.odom_received_at < odom_timeout
+            )
             return ObservationContext(
                 q=q,
                 dq=dq,
                 quat=quat,
                 gyro=gyro,
                 command=self.command.copy(),
+                base_pos_w=self.base_pos_w.copy() if odom_fresh else None,
+                base_lin_vel_w=self.base_lin_vel_w.copy() if odom_fresh else None,
             )
 
     # ----- State-machine controls -----
@@ -238,7 +293,18 @@ class Controller:
         self.state_machine.transition(state, force=force)
 
     def on_state_transition(self) -> None:
-        self.active_profile.policy.reset()
+        if self.state_machine.current.reset_policy_on_enter:
+            self.active_profile.policy.reset()
+
+    def activate_policy(self, name: str) -> None:
+        """Select a profile from a configured state, without manual switch restrictions."""
+        if name == self.active_profile_name:
+            return
+        with self.lock:
+            profile = self.policy_manager.switch_to(name)
+            self.obs_joint_order = list(profile.obs_joint_order)
+            self.update_command_from_remote()
+        log(f"policy -> {name} ({profile.policy_yaml_path})")
 
     def switch_to_policy(self, name: str) -> bool:
         if name == self.active_profile_name:
@@ -248,11 +314,7 @@ class Controller:
             log(f"policy switch ignored in state={self.state}; allowed states: {allowed}")
             return False
 
-        with self.lock:
-            profile = self.policy_manager.switch_to(name)
-            self.obs_joint_order = list(profile.obs_joint_order)
-            self.update_command_from_remote()
-        log(f"policy -> {name} ({profile.policy_yaml_path})")
+        self.activate_policy(name)
         if self.policy_manager.switch.on_switch:
             self.transition(self.policy_manager.switch.on_switch, force=True)
         return True
@@ -311,11 +373,18 @@ class Controller:
     # ----- State dispatch -----
 
     def step(self) -> None:
-        if self.policy_manager.switch.enabled and self.button_pressed(self.policy_manager.switch.button):
-            self.switch_to_next_policy()
-            return
-
-        self.state_machine.step()
+        with self.lock:
+            paused = self.simulation_paused
+        if not paused:
+            if self.policy_manager.switch.enabled and self.button_pressed(self.policy_manager.switch.button):
+                self.switch_to_next_policy()
+            else:
+                self.state_machine.step()
+        if self.policy_debug_viz_pub is not None:
+            policy = self.active_profile.policy if self.state_machine.current.state_type == "policy" else None
+            self.policy_debug_viz_pub.Write(String_(policy_debug_viz_packet(
+                policy, self.motion_ghost_settings, self.last_policy_command,
+            )))
 
     # ----- Main loop and cleanup -----
 
@@ -362,6 +431,8 @@ class Controller:
                 ready = lowstate_ready and imu_ready
             if ready:
                 self.step()
+            if self.controller_state_pub is not None:
+                self.controller_state_pub.Write(String_(self.state))
 
             now = time.perf_counter()
             if now - last_log >= 1.0:
@@ -388,7 +459,8 @@ class Controller:
                     ]
                 )
                 last_log = now
-            timer.sleep()
+            # Each tracking inference advances one reference frame at this same rate.
+            timer.sleep(self.simulation_speed)
 
     def close(self, *_args) -> None:
         self.alive = False
@@ -400,67 +472,17 @@ class Controller:
         self.alive = False
         console.stop()
         self.lowstate_sub.Close()
+        if self.simulation_pause_sub is not None:
+            self.simulation_pause_sub.Close()
+        if self.simulation_speed_sub is not None:
+            self.simulation_speed_sub.Close()
         if self.secondary_imu_sub is not None:
             self.secondary_imu_sub.Close()
+        if self.odom_sub is not None:
+            self.odom_sub.Close()
         self.lowcmd_pub.Close()
-
-
-def parse_args() -> RuntimeConfig:
-    parser = argparse.ArgumentParser(description="Reusable Unitree controller for sim or real robot.")
-    parser.add_argument("--mode", choices=("real", "sim"), default=DEFAULT_MODE)
-    parser.add_argument("--net", default=DEFAULT_NET, help="DDS network interface. Use lo for local sim.")
-    parser.add_argument("--robot", help="Robot name for logs. Defaults to controller.yaml robot.")
-    parser.add_argument(
-        "--ckpt",
-        type=Path,
-        help="Policy YAML file or checkpoint directory containing policy.yaml.",
-    )
-    parser.add_argument(
-        "--multi-ckpt",
-        type=Path,
-        help="YAML manifest containing multiple ckpt directories.",
-    )
-    parser.add_argument(
-        "--state-machine",
-        type=Path,
-        help="Optional YAML state machine. Defaults to state_machine.yaml beside the ckpt or multi-ckpt YAML.",
-    )
-    args = parser.parse_args()
-    if args.ckpt is None and args.multi_ckpt is None:
-        parser.error("one of --ckpt or --multi-ckpt is required")
-
-    ckpt_dir = args.ckpt or args.multi_ckpt.expanduser().resolve().parent
-    return RuntimeConfig(
-        mode=args.mode,
-        net=args.net,
-        ckpt_dir=ckpt_dir,
-        robot=args.robot,
-        multi_ckpt=args.multi_ckpt,
-        state_machine=args.state_machine,
-    )
-
-
-def main() -> None:
-    config = parse_args()
-
-    if config.mode == "real":
-        console.log(
-            "WARNING: Please ensure there are no obstacles around the robot while running controller.py.",
-            style="bold red",
-        )
-        input("Press Enter to continue...")
-
-    if config.net:
-        ChannelFactoryInitialize(0, config.net)
-    else:
-        ChannelFactoryInitialize(0)
-
-    controller = Controller(config)
-    try:
-        controller.spin()
-    finally:
-        controller.cleanup()
-
-
-if __name__ == "__main__":
-    main()
+        if self.controller_state_pub is not None:
+            self.controller_state_pub.Close()
+        if self.policy_debug_viz_pub is not None:
+            self.policy_debug_viz_pub.Write(String_(policy_debug_viz_packet(None, self.motion_ghost_settings)))
+            self.policy_debug_viz_pub.Close()

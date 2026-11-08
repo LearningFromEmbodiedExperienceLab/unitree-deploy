@@ -1,0 +1,166 @@
+#
+# Loco Lab Flat Terrain Tracking Policy
+# Vanilla PPO
+# Trained with Z RL
+#
+
+robot: "g1"
+imu_source: "pelvis"  # pelvis: LowState.imu_state; torso: rt/secondary_imu
+policy_path: "policy.onnx"
+policy_class: "unitree_deploy.policy.motion_tracking:MotionTrackingPolicy"
+
+policy_step_dt: 0.02
+physics_dt: 0.001
+decimation: 20
+
+# Runtime joystick command dimension; separate from the reference motion command.
+runtime_command_dim: 3
+
+# Training obs joint order.
+obs_joint_order: [
+  "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint", "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+  "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint", "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+  "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
+  "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint", "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+  "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint", "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+]
+
+# SDK joint order used by joint positions, action scales, and PD gains below.
+sdk_joint_order: [
+  "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint", "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+  "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint", "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+  "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
+  "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint", "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+  "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint", "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+]
+
+# Default joint positions in sdk_joint_order.
+default_qpos: [
+  -0.10000000149011612, 0.0, 0.0, 0.30000001192092896, -0.20000000298023224, 0.0,
+  -0.10000000149011612, 0.0, 0.0, 0.30000001192092896, -0.20000000298023224, 0.0,
+  0.0, 0.0, 0.0,
+  0.20000000298023224, 0.25, 0.0, 0.8999999761581421, 0.0, 0.0, 0.0,
+  0.20000000298023224, -0.25, 0.0, 0.8999999761581421, 0.0, 0.0, 0.0,
+]
+
+# First motion-frame joint positions in sdk_joint_order, used for arm preparation.
+motion_start_q: [
+  0.03195900097489357, 0.0820000022649765, 0.278099000453949, 0.28255200386047363, -0.3110629916191101, -0.03410499915480614,
+  -0.0011259999591857195, -0.12557999789714813, -0.4165729880332947, 0.3140209913253784, -0.262813001871109, 0.06545999646186829,
+  1.4000000192027073e-05, 0.001998000079765916, -0.014712999574840069,
+  -0.09624099731445312, 1.7805869579315186, 0.12489999830722809, 1.4116649627685547, -0.09306500107049942, 0.11448699980974197, 0.08642300218343735,
+  -0.11781399697065353, -1.6501829624176025, -0.1204100027680397, 1.3452630043029785, 0.06537900120019913, 0.13427400588989258, -0.08660800009965897,
+]
+
+policy_input_name: "obs"
+policy_output_name: "actions"
+
+# Observation specs.
+obs_use_scaled_prev_action: false
+obs_prime_on_reset: true
+obs_group_concat_mode: "term_major"
+observation_modules: ["unitree_deploy.obs.motion_tracking_obs"]
+observation_types:
+  base_ang_vel: "unitree_deploy.obs.base_obs:BaseAngularVelocityObservation"
+  projected_gravity: "unitree_deploy.obs.base_obs:ProjectedGravityObservation"
+  joint_pos_rel: "unitree_deploy.obs.base_obs:JointPositionObservation"
+  joint_vel: "unitree_deploy.obs.base_obs:JointVelocityObservation"
+  prev_action: "unitree_deploy.obs.base_obs:PreviousActionObservation"
+
+# Reference motion command fields and concatenation order; must match training.
+# Dimension is derived automatically (68 for the six fields below).
+# Height is world z; velocities and gravity are expressed in the reference pelvis frame.
+motion_command_terms: ["joint_pos", "joint_vel", "base_height", "base_lin_vel", "base_ang_vel", "projected_gravity"]
+
+# Reference body order in the embedded motion; must match ONNX metadata.
+anchor_body_name: "pelvis"
+body_names: [
+  "pelvis",
+  "left_hip_roll_link", "left_knee_link", "left_ankle_roll_link",
+  "right_hip_roll_link", "right_knee_link", "right_ankle_roll_link",
+  "torso_link",
+  "left_shoulder_roll_link", "left_elbow_link", "left_wrist_yaw_link",
+  "right_shoulder_roll_link", "right_elbow_link", "right_wrist_yaw_link",
+]
+
+# Observation order must match the actor input layout.
+observations:
+  - type: motion_command
+    history_len: 1
+  - type: base_ang_vel
+    history_len: 1
+  - type: projected_gravity
+    history_len: 1
+  - type: joint_pos_rel
+    history_len: 1
+  - type: joint_vel
+    history_len: 1
+  - type: prev_action
+    history_len: 1
+
+# Action specs. null disables action clipping.
+action_dim: 29
+action_clip: null
+# target_q = reference joint positions + action_scale * action
+use_reference_residual: true  # residual action on reference motion joint positions
+
+# Action joint order follows training action joint order.
+action_joint_order: [
+  "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint", "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+  "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint", "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+  "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
+  "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint", "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+  "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint", "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+]
+
+# Action scales in sdk_joint_order.
+action_scale: [
+  0.5475464652142303, 0.3506614663788243, 0.5475464652142303, 0.3506614663788243, 0.43857731392336724, 0.43857731392336724,
+  0.5475464652142303, 0.3506614663788243, 0.5475464652142303, 0.3506614663788243, 0.43857731392336724, 0.43857731392336724,
+  0.5475464652142303, 0.43857731392336724, 0.43857731392336724,
+  0.43857731392336724, 0.43857731392336724, 0.43857731392336724, 0.43857731392336724, 0.43857731392336724, 0.07450087032950714, 0.07450087032950714,
+  0.43857731392336724, 0.43857731392336724, 0.43857731392336724, 0.43857731392336724, 0.43857731392336724, 0.07450087032950714, 0.07450087032950714,
+]
+
+# Policy gains in sdk_joint_order, used for tracking and holding the final frame.
+kp_policy: [
+  40.17923847137318, 99.09842777666113, 40.17923847137318, 99.09842777666113, 28.50124619574858, 28.50124619574858,
+  40.17923847137318, 99.09842777666113, 40.17923847137318, 99.09842777666113, 28.50124619574858, 28.50124619574858,
+  40.17923847137318, 28.50124619574858, 28.50124619574858,
+  14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 16.77832748089279, 16.77832748089279,
+  14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 16.77832748089279, 16.77832748089279,
+]
+
+kd_policy: [
+  2.5578897650279457, 6.3088018534966395, 2.5578897650279457, 6.3088018534966395, 1.814445686584846, 1.814445686584846,
+  2.5578897650279457, 6.3088018534966395, 2.5578897650279457, 6.3088018534966395, 1.814445686584846, 1.814445686584846,
+  2.5578897650279457, 1.814445686584846, 1.814445686584846,
+  0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 1.06814150219, 1.06814150219,
+  0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 1.06814150219, 1.06814150219,
+]
+
+# Move-to-default gains in sdk_joint_order.
+kp_fixed_stand: [
+  40.17923847137318, 99.09842777666113, 40.17923847137318, 99.09842777666113, 28.50124619574858, 28.50124619574858,
+  40.17923847137318, 99.09842777666113, 40.17923847137318, 99.09842777666113, 28.50124619574858, 28.50124619574858,
+  40.17923847137318, 28.50124619574858, 28.50124619574858,
+  14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 16.77832748089279, 16.77832748089279,
+  14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 14.25062309787429, 16.77832748089279, 16.77832748089279,
+]
+
+kd_fixed_stand: [
+  2.5578897650279457, 6.3088018534966395, 2.5578897650279457, 6.3088018534966395, 1.814445686584846, 1.814445686584846,
+  2.5578897650279457, 6.3088018534966395, 2.5578897650279457, 6.3088018534966395, 1.814445686584846, 1.814445686584846,
+  2.5578897650279457, 1.814445686584846, 1.814445686584846,
+  0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 1.06814150219, 1.06814150219,
+  0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 1.06814150219, 1.06814150219,
+]
+
+# Damping gains in sdk_joint_order. kp is always zero in damping.
+kd_damping: [
+  2.5578897650279457, 6.3088018534966395, 2.5578897650279457, 6.3088018534966395, 1.814445686584846, 1.814445686584846,
+  2.5578897650279457, 6.3088018534966395, 2.5578897650279457, 6.3088018534966395, 1.814445686584846, 1.814445686584846,
+  2.5578897650279457, 1.814445686584846, 1.814445686584846,
+  0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 1.06814150219, 1.06814150219,
+  0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 0.907222843292423, 1.06814150219, 1.06814150219,
+]

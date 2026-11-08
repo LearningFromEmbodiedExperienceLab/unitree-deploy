@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from unitree_deploy.obs.observation import ObservationBase, ObservationContext
+from unitree_deploy.obs.base_obs import ObservationBase, ObservationContext
 from unitree_deploy.policy.base_policy import BasePolicy, ObservationRegistry
 
 
@@ -54,7 +54,7 @@ CUSTOM_OBSERVATIONS = '''from __future__ import annotations
 
 import numpy as np
 
-from unitree_deploy.obs.observation import ObservationBase, ObservationContext
+from unitree_deploy.obs.base_obs import ObservationBase, ObservationContext
 
 
 class CustomObservation(ObservationBase):
@@ -95,6 +95,12 @@ policy_input_name: "policy"
 policy_output_name: "action"
 
 observation_types:
+  command: CommandObservation
+  base_ang_vel: BaseAngularVelocityObservation
+  projected_gravity: ProjectedGravityObservation
+  joint_pos: JointPositionObservation
+  joint_vel: JointVelocityObservation
+  prev_action: PreviousActionObservation
   custom_obs: "custom_observations:CustomObservation"
 
 observations:
@@ -151,7 +157,7 @@ README = '''# Unitree Deploy Plugin Template
 policy_class: "custom_policy:CustomPolicy"
 ```
 
-`policy.yaml` 里的 `observation_types` 会注册自定义 observation；`params` 会作为关键字参数传给 observation 构造函数。
+`policy.yaml` 里的 `observation_types` 支持内置 observation 的短类名（如 `CommandObservation`），自定义 observation 使用 `模块名:类名`；`params` 会作为关键字参数传给 observation 构造函数。
 '''
 
 

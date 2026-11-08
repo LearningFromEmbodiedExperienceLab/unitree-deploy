@@ -1,4 +1,3 @@
-import argparse
 import math
 import signal
 import struct
@@ -8,7 +7,6 @@ from dataclasses import dataclass
 
 import mujoco
 import numpy as np
-from pynput import keyboard
 from unitree_deploy.config.defaults import (
     ACC_SENSOR_NAMES,
     BAND_CLEARANCE,
@@ -16,33 +14,29 @@ from unitree_deploy.config.defaults import (
     BAND_MAX_FORCE,
     BAND_MAX_Z,
     BAND_MIN_Z,
-    BAND_SITES,
     BAND_STEP,
     BAND_STIFFNESS,
     BASE_HEIGHT,
     BASE_QUAT,
-    DEFAULT_NET,
+    CONTROLLER_STATE_TOPIC,
     GYRO_SENSOR_NAMES,
     HG_MODE_MACHINE,
     HG_MODE_PR,
     ODOM_TOPIC,
     RENDER_HZ,
     SIM_HZ,
+    SIM_PAUSE_TOPIC,
+    SIM_SPEED_TOPIC,
     SIM_REMOTE_BUTTON_KEYS,
     STATE_HZ,
+    Z1_CONTROLLER_STATE_TOPIC,
     Z1_LOWCMD_TOPIC,
     Z1_LOWSTATE_TOPIC,
 )
-from unitree_deploy.robot_model.robot_config import (
-    DEFAULT_ROBOT,
-    DEFAULT_TERRAIN,
-    DEFAULT_VIEWER,
-    VIEWER_CHOICES,
-    RobotModel,
-    load_robot_model,
-)
+from unitree_deploy.robot_model.robot_config import RobotModel
+from unitree_deploy.runtime.timing import LoopTimer
+from .keyboard import KeyboardState, STICK_KEYS
 from unitree_sdk2py.core.channel import (
-    ChannelFactoryInitialize,
     ChannelPublisher,
     ChannelSubscriber,
 )
@@ -56,9 +50,16 @@ from unitree_sdk2py.idl.unitree_go.msg.dds_ import (
     SportModeState_,
 )
 from unitree_sdk2py.utils.crc import CRC
-from unitree_deploy.runtime.unitree_dds import resolve_low_level_dds
+from unitree_deploy.runtime.transport.dds import resolve_low_level_dds
 from unitree_deploy.utils.terminal_status import ComponentConsole
 from unitree_deploy.utils.viewer_backend import create_viewer_backend
+from unitree_deploy.visualization.policy_debug_viz import (
+    PolicyDebugViz,
+    POLICY_DEBUG_VIZ_TOPIC,
+    load_velocity_viz_config,
+)
+from unitree_deploy.visualization.video import VideoConfig
+from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
 
 
 console = ComponentConsole("sim_bridge", "cyan")
@@ -72,62 +73,6 @@ def status(fields) -> None:
     console.status(fields)
 
 
-STICK_KEYS = frozenset("wasdqe")
-
-
-class KeyboardState:
-    def __init__(self) -> None:
-        self.pressed: set[str] = set()
-        self.lock = threading.Lock()
-        self.listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
-        self.control_handler = None
-
-    def _on_press(self, key) -> None:
-        try:
-            if hasattr(key, 'char') and key.char:
-                k = key.char.lower()
-            else:
-                k = str(key).replace('Key.', '').lower()
-        except AttributeError:
-            k = str(key).replace('Key.', '').lower()
-
-        with self.lock:
-            if k in STICK_KEYS or k in SIM_REMOTE_BUTTON_KEYS:
-                self.pressed.add(k)
-
-        if self.control_handler:
-            self.control_handler(k)
-
-    def _on_release(self, key) -> None:
-        try:
-            if hasattr(key, 'char') and key.char:
-                k = key.char.lower()
-            else:
-                k = str(key).replace('Key.', '').lower()
-        except AttributeError:
-            k = str(key).replace('Key.', '').lower()
-
-        with self.lock:
-            self.pressed.discard(k)
-
-    def start(self) -> None:
-        self.listener.start()
-
-    def stop(self) -> None:
-        self.listener.stop()
-
-    def stick_keys(self) -> set[str]:
-        with self.lock:
-            return self.pressed & STICK_KEYS
-
-    def active_keys(self) -> set[str]:
-        with self.lock:
-            return self.pressed.copy()
-
-    def set_control_handler(self, handler) -> None:
-        self.control_handler = handler
-
-
 @dataclass(frozen=True)
 class RuntimeConfig:
     robot: RobotModel
@@ -135,20 +80,7 @@ class RuntimeConfig:
     viewer: str
     band_sites: tuple[str, ...]
     band_enabled: bool
-
-
-class LoopTimer:
-    def __init__(self, hz: int):
-        self.dt = 1.0 / hz
-        self.next_t = time.perf_counter() + self.dt
-
-    def sleep(self) -> None:
-        now = time.perf_counter()
-        if self.next_t > now:
-            time.sleep(self.next_t - now)
-            self.next_t += self.dt
-        else:
-            self.next_t = now + self.dt
+    video: VideoConfig | None = None
 
 
 def quat_to_rpy(q: np.ndarray) -> list[float]:
@@ -174,6 +106,7 @@ class SimBridge:
         self.base_command_received = False
         self.z1_command_received = False
         self.simulation_paused = True
+        self.simulation_speed = 1.0
         self.tick = 1
         self.mode_machine = HG_MODE_MACHINE
         self.mode_pr = HG_MODE_PR
@@ -185,6 +118,11 @@ class SimBridge:
         self.model = mujoco.MjModel.from_xml_path(str(self.config.robot.xml_path))
         self.model.opt.timestep = 1.0 / SIM_HZ
         self.data = mujoco.MjData(self.model)
+        self.policy_debug_viz = PolicyDebugViz(
+            self.model, self.data, velocity_config=load_velocity_viz_config(config.robot),
+        )
+        self.controller_state = "waiting"
+        self.z1_controller_state = "waiting"
         # Viewer backend owns GUI/server lifecycle; the physics loop only calls sync().
         self.viewer_backend = create_viewer_backend(
             self.config.viewer,
@@ -194,6 +132,10 @@ class SimBridge:
             sim_hz=SIM_HZ,
             render_hz=RENDER_HZ,
             log=log,
+            policy_debug_viz=self.policy_debug_viz,
+            video=config.video,
+            simulation_speed=lambda: self.simulation_speed,
+            controller_state=self.viewer_controller_state,
         )
         self.num_motor = int(self.model.nu)
         self.motor_names = self.actuator_names()
@@ -274,6 +216,10 @@ class SimBridge:
 
         self.lowstate_pub = ChannelPublisher(self.dds.lowstate_topic, self.dds.lowstate_type)
         self.lowstate_pub.Init()
+        self.simulation_pause_pub = ChannelPublisher(SIM_PAUSE_TOPIC, String_)
+        self.simulation_pause_pub.Init()
+        self.simulation_speed_pub = ChannelPublisher(SIM_SPEED_TOPIC, String_)
+        self.simulation_speed_pub.Init()
         self.secondary_imu_pub = None
         if self.dds.secondary_imu_topic is not None and self.dds.secondary_imu_type is not None:
             self.secondary_imu_pub = ChannelPublisher(
@@ -285,13 +231,21 @@ class SimBridge:
         self.odom_pub.Init()
         self.lowcmd_sub = ChannelSubscriber(self.dds.lowcmd_topic, self.dds.lowcmd_type)
         self.lowcmd_sub.Init(self.on_lowcmd)
+        self.controller_state_sub = ChannelSubscriber(CONTROLLER_STATE_TOPIC, String_)
+        self.controller_state_sub.Init(lambda msg: setattr(self, "controller_state", msg.data), 1)
+        self.z1_controller_state_sub = None
         self.z1_lowstate_pub = None
         self.z1_lowcmd_sub = None
         if self.z1_motor_indices.size:
+            self.z1_controller_state_sub = ChannelSubscriber(Z1_CONTROLLER_STATE_TOPIC, String_)
+            self.z1_controller_state_sub.Init(lambda msg: setattr(self, "z1_controller_state", msg.data), 1)
             self.z1_lowstate_pub = ChannelPublisher(Z1_LOWSTATE_TOPIC, MotorStates_)
             self.z1_lowstate_pub.Init()
             self.z1_lowcmd_sub = ChannelSubscriber(Z1_LOWCMD_TOPIC, MotorCmds_)
             self.z1_lowcmd_sub.Init(self.on_z1_lowcmd)
+
+        self.policy_debug_viz_sub = ChannelSubscriber(POLICY_DEBUG_VIZ_TOPIC, String_)
+        self.policy_debug_viz_sub.Init(lambda msg: self.policy_debug_viz.receive(msg.data), 1)
 
         self.state_thread = threading.Thread(target=self.publish_state_loop, daemon=False)
 
@@ -302,6 +256,11 @@ class SimBridge:
         signal.signal(signal.SIGTERM, self.close)
 
     # ----- MuJoCo model lookup helpers -----
+
+    def viewer_controller_state(self) -> str:
+        if self.z1_motor_indices.size:
+            return f"{self.controller_state} / Z1: {self.z1_controller_state}"
+        return self.controller_state
 
     def actuator_names(self) -> list[str]:
         return [
@@ -478,9 +437,16 @@ class SimBridge:
 
     # ----- Keyboard controls and virtual wireless remote -----
 
-    def handle_control_key(self, key: str) -> None:
-        if key == "space":
-            self.toggle_simulation_pause()
+    def handle_control_key(self, key: str, *, repeat: bool = False) -> None:
+        if key in ("=", "-"):
+            if not repeat:
+                speeds = (0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)
+                index = speeds.index(self.simulation_speed) + (1 if key == "=" else -1)
+                self.simulation_speed = speeds[max(0, min(index, len(speeds) - 1))]
+                log(f"simulation speed={self.simulation_speed:g}x")
+        elif key == "space":
+            if not repeat:
+                self.toggle_simulation_pause()
         elif key == "up":
             self.move_band(BAND_STEP)
         elif key == "down":
@@ -490,6 +456,8 @@ class SimBridge:
         elif key == "r":
             with self.lock:
                 self.reset_sim()
+        elif self.policy_debug_viz is not None and not repeat and self.policy_debug_viz.handle_key(key):
+            log(f"policy debug viz={'on' if self.policy_debug_viz.visible else 'off'}")
         elif key == "esc":
             self.close()
 
@@ -681,8 +649,10 @@ class SimBridge:
         return msg
 
     def publish_state_loop(self) -> None:
-        timer = LoopTimer(STATE_HZ)
+        timer = LoopTimer(1.0 / STATE_HZ)
         while self.alive:
+            self.simulation_pause_pub.Write(String_("paused" if self.simulation_paused else "running"))
+            self.simulation_speed_pub.Write(String_(str(self.simulation_speed)))
             qpos, qvel, ctrl, gyro, acc, secondary_imu = self.state_snapshot()
             self.lowstate_pub.Write(self.make_lowstate(qpos, qvel, ctrl, gyro, acc))
             if self.secondary_imu_pub is not None and secondary_imu is not None:
@@ -695,7 +665,7 @@ class SimBridge:
     # ----- Simulation loop and cleanup -----
 
     def simulate(self) -> None:
-        timer = LoopTimer(SIM_HZ)
+        timer = LoopTimer(1.0 / SIM_HZ)
         last_log = time.perf_counter()
         steps = 0
 
@@ -719,6 +689,7 @@ class SimBridge:
                     status(
                         [
                             ("state", "paused", "yellow"),
+                            ("speed", f"{self.simulation_speed:g}x", "cyan"),
                             ("hint", "press space", "white"),
                             ("band", "on" if self.band_on else "off", "green" if self.band_on else "red"),
                         ]
@@ -727,6 +698,7 @@ class SimBridge:
                     command = self.current_command()
                     fields = [
                         ("state", "running", "green"),
+                        ("speed", f"{self.simulation_speed:g}x", "cyan"),
                         ("t", f"{steps / SIM_HZ:6.2f}s", "cyan"),
                         ("height", f"{self.data.qpos[2]:.3f}m", "magenta"),
                         (
@@ -757,7 +729,7 @@ class SimBridge:
                     )
                     status(fields)
                 last_log = now
-            timer.sleep()
+            timer.sleep(self.simulation_speed)
 
     def run(self) -> None:
         log(
@@ -777,6 +749,7 @@ class SimBridge:
             log(f"z1 topics: lowcmd={Z1_LOWCMD_TOPIC}, lowstate={Z1_LOWSTATE_TOPIC}")
         log(f"sim={SIM_HZ}Hz state_pub={STATE_HZ}Hz viewer={self.config.viewer}")
         log(f"simulation starts paused; press \"space\" to continue")
+        log("simulation speed keys: = faster, - slower (0.5x, 1x, 2x, 3x, 4x, 5x, 6x, 7x, 8x)")
         if self.band_on:
             log(f"suspension bands enabled at z={self.band_z:.3f} m")
 
@@ -798,9 +771,14 @@ class SimBridge:
         self.alive = False
         for obj in (
             self.lowcmd_sub,
+            self.controller_state_sub,
+            self.z1_controller_state_sub,
             self.lowstate_pub,
+            self.simulation_pause_pub,
+            self.simulation_speed_pub,
             self.secondary_imu_pub,
             self.odom_pub,
+            self.policy_debug_viz_sub,
             self.z1_lowcmd_sub,
             self.z1_lowstate_pub,
         ):
@@ -810,56 +788,3 @@ class SimBridge:
                 obj.Close()
             except Exception:
                 pass
-
-
-def parse_args() -> RuntimeConfig:
-    parser = argparse.ArgumentParser(description="MuJoCo to Unitree DDS bridge.")
-    parser.add_argument("--robot", default=DEFAULT_ROBOT, help="Robot folder under robot_model/.")
-    parser.add_argument("--model-xml", help="Override robot XML path.")
-    parser.add_argument(
-        "--terrain",
-        default=DEFAULT_TERRAIN,
-        help="Terrain name under robot_model/scene or XML path.",
-    )
-    parser.add_argument("--net", default=DEFAULT_NET, help="DDS network interface.")
-    parser.add_argument(
-        "--viewer",
-        choices=VIEWER_CHOICES,
-        default=DEFAULT_VIEWER,
-        help="Visualization backend.",
-    )
-    parser.add_argument(
-        "--band-sites",
-        default=",".join(BAND_SITES),
-        help="Comma-separated MuJoCo site names used by the suspension bands.",
-    )
-    parser.add_argument(
-        "--band",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable or disable suspension bands.",
-    )
-    args = parser.parse_args()
-    band_sites = tuple(site.strip() for site in args.band_sites.split(",") if site.strip())
-    return RuntimeConfig(
-        robot=load_robot_model(args.robot, args.model_xml, args.terrain),
-        net=args.net,
-        viewer=args.viewer,
-        band_sites=band_sites,
-        band_enabled=bool(args.band),
-    )
-
-
-def main() -> None:
-    config = parse_args()
-    ChannelFactoryInitialize(0, config.net)
-    bridge = SimBridge(config)
-    try:
-        bridge.run()
-    finally:
-        bridge.close()
-        bridge.cleanup()
-
-
-if __name__ == "__main__":
-    main()

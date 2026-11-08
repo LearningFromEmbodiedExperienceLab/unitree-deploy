@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 
 @dataclass(frozen=True)
 class ObservationContext:
-    """One control-step snapshot passed from controller.py into policy.py."""
+    """Control-step snapshot: joints in observation order, quaternion in wxyz order.
+
+    Optional base position and linear velocity are measured in the world frame.
+    """
 
     q: np.ndarray
     dq: np.ndarray
     quat: np.ndarray
     gyro: np.ndarray
     command: np.ndarray
+    base_pos_w: np.ndarray | None = None
+    base_lin_vel_w: np.ndarray | None = None
 
 
 def _normalize_quaternion(quat) -> np.ndarray:
@@ -36,7 +43,7 @@ def _quat_to_body_gravity(quat) -> np.ndarray:
     )
 
 
-class ObservationBase:
+class ObservationBase(ABC):
     """Base class for one observation term with optional history stacking.
 
     History is stored internally in chronological order:
@@ -94,6 +101,7 @@ class ObservationBase:
         self.buffer.fill(0.0)
 
     def prime(self, context: ObservationContext) -> None:
+        """Fill every history frame with the current processed observation."""
         current = self._compute_processed_current_obs(context)
         self.buffer[:] = current
 
@@ -109,7 +117,9 @@ class ObservationBase:
             return self.buffer[::-1]
         return self.buffer
 
+    @abstractmethod
     def compute(self, context: ObservationContext) -> np.ndarray:
+        """Return base_dim raw values; the base class applies scale, clip, and history."""
         raise NotImplementedError
 
     def _compute_processed_current_obs(self, context: ObservationContext) -> np.ndarray:
@@ -174,6 +184,30 @@ class ProjectedGravityObservation(ObservationBase):
 
     def compute(self, context: ObservationContext) -> np.ndarray:
         return _quat_to_body_gravity(context.quat).astype(self.dtype, copy=False)
+
+
+class BaseLinearVelocityObservation(ObservationBase):
+    """Measured world-frame base velocity expressed in the base frame."""
+
+    def __init__(
+        self,
+        *,
+        history_len: int,
+        history_order: str = "oldest_first",
+        dtype=np.float32,
+    ) -> None:
+        super().__init__(
+            base_dim=3,
+            history_len=history_len,
+            history_order=history_order,
+            dtype=dtype,
+        )
+
+    def compute(self, context: ObservationContext) -> np.ndarray:
+        if context.base_lin_vel_w is None:
+            raise ValueError("Base linear velocity requires world-frame velocity from odometry.")
+        quat_xyzw = np.asarray(context.quat)[[1, 2, 3, 0]]
+        return Rotation.from_quat(quat_xyzw).inv().apply(context.base_lin_vel_w)
 
 
 class BaseAngularVelocityObservation(ObservationBase):
@@ -293,7 +327,12 @@ class PreviousActionObservation(ObservationBase):
 # ---------- Observation Group Wrapper ----------
 
 class ObservationGroup:
-    """Fixed-layout observation vector assembled from named observation terms."""
+    """Assemble terms in YAML order into a reusable, flat observation vector.
+
+    term_major:    [term A's history, term B's history, ...]
+    history_major: [all terms at frame 0, all terms at frame 1, ...]
+    Each term's history_order determines which frame comes first.
+    """
 
     def __init__(
         self,
@@ -337,7 +376,6 @@ class ObservationGroup:
             observation.update(context)
 
     def compute(self) -> np.ndarray:
-        # history_major mode: concat by obs historical order
         if self.obs_group_concat_mode == "history_major":
             offset = 0
             for history_i in range(self.history_len):
@@ -347,7 +385,6 @@ class ObservationGroup:
                     offset = next_offset
             return self.output
 
-        # term_major mode: concat by term order
         for observation, output_slice in self._slices:
             self.output[output_slice] = observation.ordered_buffer().reshape(-1)
         return self.output

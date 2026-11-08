@@ -1,5 +1,6 @@
 <mujoco model="rough_terrain">
   <include file="materials.xml"/>
+  <include file="origin_marker.xml"/>
 
   <worldbody>
     <geom name="floor" size="0 0 0.05" friction="0.85 .1 .1" type="plane" material="rough_groundplane"/>

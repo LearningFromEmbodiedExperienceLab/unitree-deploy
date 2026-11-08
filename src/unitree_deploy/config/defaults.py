@@ -10,9 +10,13 @@ LOWCMD_TOPIC = "rt/lowcmd"
 LOWSTATE_TOPIC = "rt/lowstate"
 SECONDARY_IMU_TOPIC = "rt/secondary_imu"
 ODOM_TOPIC = "rt/odommodestate"
+SIM_PAUSE_TOPIC = "rt/sim_pause"
+SIM_SPEED_TOPIC = "rt/sim_speed"
+CONTROLLER_STATE_TOPIC = "rt/controller_state"
 
 Z1_LOWCMD_TOPIC = "rt/z1/lowcmd"
 Z1_LOWSTATE_TOPIC = "rt/z1/lowstate"
+Z1_CONTROLLER_STATE_TOPIC = "rt/z1/controller_state"
 Z1_UDP_SERVICE_PATH = str(
     Path(__file__).resolve().parents[4] / "z1_controller/deploy/x86_64/z1_udp_service"
 )

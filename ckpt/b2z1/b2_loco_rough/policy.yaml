@@ -48,12 +48,12 @@ obs_use_scaled_prev_action: false
 obs_prime_on_reset: false
 obs_group_concat_mode: term_major
 observation_types:
-  command: "unitree_deploy.obs.observation:CommandObservation"
-  base_ang_vel: "unitree_deploy.obs.observation:BaseAngularVelocityObservation"
-  projected_gravity: "unitree_deploy.obs.observation:ProjectedGravityObservation"
-  joint_pos_rel: "unitree_deploy.obs.observation:JointPositionObservation"
-  joint_vel: "unitree_deploy.obs.observation:JointVelocityObservation"
-  prev_action: "unitree_deploy.obs.observation:PreviousActionObservation"
+  command: "CommandObservation"
+  base_ang_vel: "BaseAngularVelocityObservation"
+  projected_gravity: "ProjectedGravityObservation"
+  joint_pos_rel: "JointPositionObservation"
+  joint_vel: "JointVelocityObservation"
+  prev_action: "PreviousActionObservation"
 
 observations:
   - type: command
