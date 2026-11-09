@@ -47,17 +47,20 @@ class ControllerStateMachine:
     def current(self) -> ControllerState:
         return self.states[self.current_name]
 
-    def transition(self, state: str, *, force: bool = False) -> None:
+    def transition(self, state: str, *, force: bool = False) -> bool:
         if state not in self.states:
             raise KeyError(f"unknown controller state {state!r}")
         if self.current_name == state and not force:
-            return
+            return False
+        if not self.states[state].can_enter(self.controller):
+            return False
         self.current_name = state
         self.controller.state = state
         self.controller.state_enter_t = time.perf_counter()
         self.controller.on_state_transition()
         self.current.on_enter(self.controller)
         self.controller.log(f"state -> {state}")
+        return True
 
     def step(self) -> None:
         state = self.current
@@ -68,8 +71,7 @@ class ControllerStateMachine:
         ]
         for button in pressed_buttons:
             next_state = state.next_for_button(button)
-            if next_state:
-                self.transition(next_state)
+            if next_state and self.transition(next_state):
                 return
 
         next_state = state.step(self.controller)

@@ -29,7 +29,7 @@ STATE_HZ = 200
 RENDER_HZ = 30
 
 BASE_HEIGHT = 1.0
-BASE_QUAT = (0.0, 0.0, 0.0, 1.0)
+BASE_QUAT = (1.0, 0.0, 0.0, 0.0)  # MuJoCo uses wxyz; identity faces +X.
 
 GYRO_SENSOR_NAMES = ("imu_ang_vel", "imu_gyro")
 ACC_SENSOR_NAMES = ("imu_lin_acc", "imu_acc")
@@ -43,8 +43,8 @@ HG_MODE_MACHINE = 0
 # ---------- Band Parameters ----------
 BAND_SITES = ("left_gantry_attach_point", "right_gantry_attach_point")
 BAND_CLEARANCE = 0.00
-BAND_STIFFNESS = 400.0
-BAND_DAMPING = 40.0
+BAND_STIFFNESS = 600.0
+BAND_DAMPING = 60.0
 BAND_STEP = 0.1
 BAND_MIN_Z = 0.8
 BAND_MAX_Z = 1.6

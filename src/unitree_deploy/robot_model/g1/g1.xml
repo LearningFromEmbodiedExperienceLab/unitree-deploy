@@ -190,11 +190,9 @@
           <body name="torso_link">
 
             <body name="left_gantry_attach" pos="0.0 0.1 0.2" quat="1 0 0 0">
-              <geom type="sphere" size="0.01" pos="0.0 0 0"/>
               <site name="left_gantry_attach_point" size="0.01" pos="0.0 0 0"/>
             </body>
             <body name="right_gantry_attach" pos="0.0 -0.1 0.2" quat="1 0 0 0">
-              <geom type="sphere" size="0.01" pos="0.0 0 0"/>
               <site name="right_gantry_attach_point" size="0.01" pos="0.0 0 0"/>
             </body>
 

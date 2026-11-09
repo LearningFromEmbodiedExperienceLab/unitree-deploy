@@ -50,7 +50,7 @@ states:
     # Seed = final arm-preparation target. Each step: sent += alpha * (inferred_target - sent).
     # After `frames` steps, send inferred targets directly; motion playback never pauses.
     transitions:
-      done: hold_motion
+      done: hold_motion  # auto switch to hold_motion when this state ends
       X: damping
 
   hold_motion:

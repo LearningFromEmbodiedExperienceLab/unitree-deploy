@@ -12,6 +12,7 @@ from unitree_deploy.obs.base_obs import (
     JointVelocityObservation,
     PreviousActionObservation,
 )
+from unitree_deploy.runtime.transport.reference_motion import MotionUnavailable, ReferenceStreamLost
 from ..filters import TargetEMA
 from .base import ControllerState
 
@@ -44,11 +45,12 @@ class ArmTransitionState(ControllerState):
     def __init__(self, name: str, config: Mapping[str, Any]) -> None:
         super().__init__(name, config)
         self.reset_policy_on_enter = False
-        self.locomotion_policy = str(config["locomotion_policy"])
-        self.motion_policy = str(config["motion_policy"])
         self.direction = str(config["direction"])
-        if self.direction not in ("to_motion", "to_locomotion"):
-            raise ValueError("arm_transition direction must be to_motion or to_locomotion")
+        if self.direction not in ("to_motion", "to_locomotion", "to_reference"):
+            raise ValueError("arm_transition direction must be to_motion, to_locomotion, or to_reference")
+        if self.direction != "to_reference":
+            self.locomotion_policy = str(config["locomotion_policy"])
+            self.motion_policy = str(config["motion_policy"])
         self.enabled = bool(config.get("enabled", True))
         self.duration = float(config.get("duration", 2.0))
         if self.duration < 0:
@@ -59,15 +61,25 @@ class ArmTransitionState(ControllerState):
             raise ValueError("arm_transition max_joint_speed must be positive or null")
         self.entry_ema = TargetEMA(config.get("entry_ema", {}))
 
+    def can_enter(self, controller) -> bool:
+        if self.direction == "to_reference":
+            try:
+                controller.active_profile.policy.first_reference_q()
+            except MotionUnavailable as exc:
+                controller.log(f"{exc}; staying at the default pose. Press Start again when the reference is ready.")
+                return False
+        return True
+
     def on_enter(self, controller) -> None:
-        controller.activate_policy(self.locomotion_policy)
+        if self.direction != "to_reference":
+            controller.activate_policy(self.locomotion_policy)
         profile = controller.active_profile
         self.arm_indices = np.array([
             i for i, name in enumerate(profile.obs_joint_order)
             if any(part in name for part in ("shoulder", "elbow", "wrist"))
         ])
         if self.arm_indices.size == 0:
-            raise ValueError("arm_transition requires arm joints in the locomotion policy")
+            raise ValueError("arm_transition requires arm joints in the active policy")
         if self.direction == "to_motion":
             context = controller.observation()
             self.arm_q = context.q[self.arm_indices].copy()
@@ -76,9 +88,10 @@ class ArmTransitionState(ControllerState):
         self.start_q = controller.target_sdk[profile.sdk_to_obs].copy()
         self.entry_ema.reset(self.start_q)
         self.last_arm_target = self.start_q[self.arm_indices].copy()
-        motion = controller.policy_manager.profiles[self.motion_policy]
-        first_q = dict(zip(motion.sdk_joint_order, motion.policy.config["motion_start_q"]))
-        self.motion_q = np.array([first_q[name] for name in profile.obs_joint_order])
+        if self.direction == "to_motion":
+            motion = controller.policy_manager.profiles[self.motion_policy]
+            first_q = dict(zip(motion.obs_joint_order, motion.policy.first_reference_q()))
+            self.motion_q = np.array([first_q[name] for name in profile.obs_joint_order])
 
     def step(self, controller) -> str | None:
         if not self.enabled:
@@ -87,8 +100,21 @@ class ArmTransitionState(ControllerState):
         policy = profile.policy
         context = controller.observation()
 
-        policy_context = context
-        if self.direction == "to_motion":
+        kp, kd = profile.kp_policy, profile.kd_policy
+        if self.direction == "to_reference":
+            try:
+                self.motion_q = policy.first_reference_q()
+                if getattr(policy, "replacement_reference", None) is not None and policy.reference_window is not None:
+                    # Keep the old actor active for the legs while the arms blend to the new pose.
+                    target = policy.compute_target_q(context)
+                else:
+                    target = self.start_q
+                    kp, kd = profile.kp_fixed_stand, profile.kd_fixed_stand
+            except MotionUnavailable as exc:
+                if isinstance(exc, ReferenceStreamLost) and getattr(policy, "reference_window", None) is not None:
+                    return self.transitions.get("reference_lost") or self.on_motion_unavailable(controller, exc)
+                return self.on_motion_unavailable(controller, exc)
+        elif self.direction == "to_motion":
             # Preparation freezes arm feedback; return needs live feedback as arms recover.
             q = context.q.copy()
             dq = context.dq.copy()
@@ -100,18 +126,21 @@ class ArmTransitionState(ControllerState):
                 policy.observation.prime(policy_context)
                 policy._observation_needs_prime = False
             _arm_history(policy, policy_context, self.arm_indices, self.arm_previous_action)
+            target = policy.compute_target_q(policy_context)
+            # Inference records a new action; restore the frozen arm columns for the next tick.
+            _arm_history(policy, policy_context, self.arm_indices, self.arm_previous_action)
+        else:
+            target = policy.compute_target_q(context)
+
         # Filter full-body velocity targets before blending the arms. Copy so arm
         # overrides and speed limiting cannot change the EMA's internal history.
-        target = self.entry_ema.apply(policy.compute_target_q(policy_context)).copy()
-        # Inference records a new action; restore the frozen arm columns for the next tick.
-        if self.direction == "to_motion":
-            _arm_history(policy, policy_context, self.arm_indices, self.arm_previous_action)
+        target = self.entry_ema.apply(target).copy()
 
         elapsed = time.perf_counter() - controller.state_enter_t
         ratio = 1.0 if self.duration == 0 else float(np.clip(elapsed / self.duration, 0.0, 1.0))
         # Smoothstep has zero endpoint slope; the return target follows live policy inference.
         blend = ratio * ratio * (3.0 - 2.0 * ratio)
-        arm_goal = self.motion_q[self.arm_indices] if self.direction == "to_motion" else target[self.arm_indices]
+        arm_goal = target[self.arm_indices] if self.direction == "to_locomotion" else self.motion_q[self.arm_indices]
         target[self.arm_indices] = (
             (1.0 - blend) * self.start_q[self.arm_indices] + blend * arm_goal
         )
@@ -123,7 +152,7 @@ class ArmTransitionState(ControllerState):
         self.last_arm_target = target[self.arm_indices].copy()
         controller.last_policy_command[:] = context.command
         controller.send_joint_cmd(
-            controller.reorder_policy_to_sdk(target), profile.kp_policy, profile.kd_policy
+            controller.reorder_policy_to_sdk(target), kp, kd
         )
 
         # Both the EMA window and arm speed cap must finish before the handoff.

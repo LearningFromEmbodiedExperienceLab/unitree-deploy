@@ -136,6 +136,8 @@ class SimBridge:
             video=config.video,
             simulation_speed=lambda: self.simulation_speed,
             controller_state=self.viewer_controller_state,
+            scene_overlay=self.add_band_to_scene,
+            set_sim_keyboard_enabled=self.keyboard.set_enabled,
         )
         self.num_motor = int(self.model.nu)
         self.motor_names = self.actuator_names()
@@ -477,12 +479,48 @@ class SimBridge:
         if not self.band_site_ids:
             log("suspension bands unavailable")
             return
-        self.band_on = not self.band_on
-        if self.band_on:
-            self.band_anchors[:, 2] = self.band_z
-            log(f"suspension bands restored at z={self.band_z:.3f} m")
-        else:
-            log("suspension bands released")
+        with self.lock:
+            self.band_on = not self.band_on
+            if self.band_on:
+                self.band_anchors[:] = self.make_band_anchors()
+                self.band_anchors[:, 2] = self.band_z
+                log(f"suspension bands restored at z={self.band_z:.3f} m")
+            else:
+                log("suspension bands released")
+
+    def add_band_to_scene(self, scene: mujoco.MjvScene) -> None:
+        with self.lock:
+            if not self.band_on:
+                return
+            anchors = self.band_anchors.copy()
+            sites = self.data.site_xpos[self.band_site_ids].copy()
+
+        # The raised crossbar keeps the rig visible even when sites reach their targets.
+        supports = anchors + [0., 0., .3]
+        steel = np.array([.35, .4, .45, 1.], dtype=np.float32)
+        orange = np.array([1., .6, .1, 1.], dtype=np.float32)
+        segments = [(a, b, .018, steel) for a, b in zip(supports[:-1], supports[1:])]
+        for site, anchor, support in zip(sites, anchors, supports):
+            segments.extend(((anchor, support, .008, steel), (site, anchor, .006, orange)))
+        for start, end, radius, color in segments:
+            if scene.ngeom >= scene.maxgeom:
+                return
+            if np.linalg.norm(end - start) < 1e-6:
+                continue
+            geom = scene.geoms[scene.ngeom]
+            mujoco.mjv_initGeom(geom, mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3),
+                               start, np.eye(3).reshape(9), color)
+            mujoco.mjv_connector(geom, mujoco.mjtGeom.mjGEOM_CAPSULE, radius, start, end)
+            geom.category = mujoco.mjtCatBit.mjCAT_DECOR
+            scene.ngeom += 1
+        for anchor in anchors:
+            if scene.ngeom >= scene.maxgeom:
+                return
+            geom = scene.geoms[scene.ngeom]
+            mujoco.mjv_initGeom(geom, mujoco.mjtGeom.mjGEOM_SPHERE, np.full(3, .018),
+                               anchor, np.eye(3).reshape(9), orange)
+            geom.category = mujoco.mjtCatBit.mjCAT_DECOR
+            scene.ngeom += 1
 
     def remote_bytes(self) -> list[int]:
         remote = bytearray(40)

@@ -26,9 +26,12 @@ def parse_args() -> RuntimeConfig:
         type=Path,
         help="Optional YAML state machine. Defaults to state_machine.yaml beside the ckpt or multi-ckpt YAML.",
     )
+    parser.add_argument("--motion-path", type=Path, help="Local any4hdmi .npz reference for a compatible policy.")
     args = parser.parse_args()
     if args.ckpt is None and args.multi_ckpt is None:
         parser.error("one of --ckpt or --multi-ckpt is required")
+    if args.motion_path is not None and args.multi_ckpt is not None:
+        parser.error("--motion-path requires --ckpt; use motion_path in each policy YAML with --multi-ckpt")
 
     ckpt_dir = args.ckpt or args.multi_ckpt.expanduser().resolve().parent
     return RuntimeConfig(
@@ -38,6 +41,7 @@ def parse_args() -> RuntimeConfig:
         robot=args.robot,
         multi_ckpt=args.multi_ckpt,
         state_machine=args.state_machine,
+        motion_path=args.motion_path.expanduser().resolve() if args.motion_path is not None else None,
     )
 
 

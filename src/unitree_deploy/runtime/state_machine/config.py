@@ -75,7 +75,7 @@ def parse_transitions(value: Any, state_name: str) -> dict[str, str]:
     if not isinstance(value, dict):
         raise TypeError(f"transitions for state {state_name!r} must be a mapping")
     transitions = {str(event): str(target) for event, target in value.items() if target is not None}
-    known_events = set(WIRELESS_REMOTE_BUTTON_BITS) | {"done"}
+    known_events = set(WIRELESS_REMOTE_BUTTON_BITS) | {"done", "reference_lost", "reference_ready"}
     unknown_events = sorted(set(transitions) - known_events)
     if unknown_events:
         raise KeyError(f"state {state_name!r} has unknown transition events: {unknown_events}")

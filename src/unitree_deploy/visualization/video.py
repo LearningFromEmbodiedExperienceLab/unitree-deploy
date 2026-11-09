@@ -44,7 +44,7 @@ class VideoRecorder:
         self.context = None
         self.process = None
 
-    def capture(self, data, camera, option, policy_debug_viz=None, texts=()):
+    def capture(self, data, camera, option, policy_debug_viz=None, texts=(), scene_overlay=None):
         if self.done:
             return
         t = float(data.time)
@@ -65,6 +65,8 @@ class VideoRecorder:
                               mujoco.mjtCatBit.mjCAT_ALL, self.scene)
         if policy_debug_viz is not None:
             policy_debug_viz.add_to_scene(self.scene)
+        if scene_overlay is not None:
+            scene_overlay(self.scene)
         mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN, self.context)
         mujoco.mjr_render(self.viewport, self.scene, self.context)
         for font, position, left, right in texts:

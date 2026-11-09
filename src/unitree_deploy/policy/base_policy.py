@@ -32,6 +32,8 @@ class BasePolicy:
     policy wrapper.
     """
 
+    supports_motion_path = False
+
     def __init__(
         self,
         policy_yaml_path: str | Path,
@@ -265,6 +267,7 @@ def load_policy(
     policy_yaml_path: str | Path,
     *,
     providers: Sequence[str] | None = None,
+    motion_path: Path | None = None,
 ) -> BasePolicy:
     """Load a policy from YAML, including optional user plugin modules.
 
@@ -311,8 +314,14 @@ def load_policy(
         search_dir,
     )
 
+    kwargs = {}
+    if motion_path is not None:
+        if not policy_class.supports_motion_path:
+            raise ValueError("--motion-path requires a policy that accepts a local reference clip")
+        kwargs["motion_path"] = motion_path
     return policy_class(
         policy_yaml_path,
         providers=providers,
         observation_types=observation_types,
+        **kwargs,
     )

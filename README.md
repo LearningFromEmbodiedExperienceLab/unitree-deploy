@@ -35,8 +35,10 @@ src/unitree_deploy/
 │   ├── transport/    # Unitree DDS adapters and remote decoding
 │   ├── trajectory/   # recording and replay applications
 │   └── timing.py     # shared loop pacing
-├── policy/           # ONNX policy wrapper
-├── obs/              # observation terms
+├── policy/
+│   ├── base_policy.py  # shared ONNX wrapper and checkpoint loader
+│   └── motion_tracking/  # tracking policies and references
+├── obs/              # shared and policy-specific observation terms
 ├── visualization/    # robot state visualizer
 ├── utils/            # shared helpers
 └── robot_model/      # bundled MuJoCo robot and terrain assets
@@ -53,7 +55,7 @@ uv sync
 source .venv/bin/activate
 ```
 
-For the viser viewer extras (realtime robot state visualization):
+For the mjviser browser viewer extras (realtime robot state visualization):
 
 ```bash
 uv sync --extra viewer
@@ -72,11 +74,9 @@ environment.
 
     An in-window key guide lists movement, policy, and simulation controls.
     Press `?` (`Shift` + `/`) to show or hide it.
-    Press `T` in the MuJoCo Viewer to toggle camera tracking. Press `F12` to
-    unmask MuJoCo's native keyboard shortcuts (masked by default), or mask
-    them again. While masked, the viewer handles `F12`, `T`, and `?`; simulator
-    control keys, including the policy debug viz toggle, remain available. Camera tracking
-    requires `viewer.camera.track_body` to be configured in the robot's `visualizer.yaml`.
+    Press `T` in the MuJoCo Viewer to toggle camera tracking.
+    Press `F12` in the viewer to toggle sim2sim keyboard controls and mujoco viewer's native shortcuts.
+    Camera tracking requires `viewer.camera.track_body` to be configured in the robot's `visualizer.yaml`.
     Scene lights follow the robot's position independently of camera tracking.
     The current controller state and simulation speed remain visible at the top left
     when keyboard hints are hidden. B2Z1 also shows the independent Z1 controller state.
@@ -233,6 +233,19 @@ environment.
     unitree-controller --mode real --net <interface> --ckpt ckpt/g1/vanilla_ppo_flat
     ```
 
+### Share RealSense on the same machine
+
+Capture shares the latest camera frame with Viser and policies via Linux shared memory.
+
+```bash
+uv pip install pyrealsense2
+unitree-realsense --robot g1
+unitree-visualizer --mode real --robot g1 --net eth0 --camera
+```
+
+Use the same camera name from `visualizer.yaml` in both consumers. Policies can
+read it through `unitree_deploy.runtime.transport.realsense.RealSenseReader`.
+
 ### Z1 Impedance Controller
 
 The Z1 controller uses the same `A`/`Start`/`X` state-machine flow as the
@@ -284,6 +297,45 @@ The bridge maps `rt/lowcmd`/`rt/lowstate` to the 12 B2 actuators and
 `rt/z1/lowcmd`/`rt/z1/lowstate` to the 7 Z1 actuators. Both controllers consume
 the same simulated wireless remote, so `A`, `Start`, and `X` affect both state
 machines when they run together.
+
+## Pico humanoid teleoperation / MimicLite
+
+Start G1 simulation and the controller in separate terminals:
+
+```bash
+unitree-sim-bridge --robot g1 --net lo
+unitree-controller --mode sim --robot g1 --net lo --ckpt ckpt/g1/mimic_lite
+```
+
+`Enter` to move to the default pose. Once the reference source is ready, press `\` to prepare.
+After initial pose is ready, press `b` play.
+
+Press `g` to toggle the reference ghost and `x` for damping.
+
+`-` and `=` change playback speed.
+
+Choose a motion reference source in a third terminal:
+
+```bash
+# Recorded any4hdmi G1 clip (keep the dataset's manifest.json)
+unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --motion-path /path/to/clip.npz
+
+# Or Pico (XRoboToolkit PC Service + full-body tracking)
+unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --human-height 1.75 --retarget gmr
+```
+
+The motion source starts an mjviser preview of the G1 reference and prints its browser URL.
+Install the `viewer` extras; use `--no-visualizer` for headless publishing.
+
+For local files you can also pass `--motion-path` directly to the controller.
+GMT keeps tracking the last valid frame after playback or a lost DDS source.
+Start the next publisher to prepare its first frame, then press `B` to play.
+
+For Pico, stand upright for calibration and use Pico `X` to toggle live input.
+Install `xrobotoolkit_sdk` and the selected backend (XRobot-enabled GMR, FRAX, or RoboKit).
+
+On hardware, use `--mode real` and set the DDS interface with `--net` on both
+processes. The Unitree remote uses `A` → `Start` → `B`, with `X` for damping.
 
 ## 🧩 Deployment Folders
 
@@ -378,6 +430,6 @@ In simulation, the mapped keys are `enter` for `A`, `\` for `Start`, `b` for
 
 - [ ] Max torque clipping.
 - [x] G1 motion tracking policy support.
-- [ ] VR teleoperation device port.
+- [x] Pico humanoid teleoperation over DDS with MimicLite.
 - [ ] Check viser usability for odometry and RealSense hardware deployment.
 - [ ] Refine Z1 controller code

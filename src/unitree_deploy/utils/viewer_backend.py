@@ -32,7 +32,7 @@ class ViewerCameraConfig:
     lookat: tuple[float, float, float] = (0.0, 0.0, 0.85)
     distance: float = 2.0
     elevation: float = -15.0
-    azimuth: float = 20.0
+    azimuth: float = 200.0
     track_body: str | None = None
     track_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
@@ -80,9 +80,13 @@ class MujocoViewerBackend:
         video: VideoConfig | None = None,
         simulation_speed: Callable[[], float] | None = None,
         controller_state: Callable[[], str] | None = None,
+        scene_overlay: Callable[[mujoco.MjvScene], None] | None = None,
+        set_sim_keyboard_enabled: Callable[[bool], None] | None = None,
     ) -> None:
         self.model = model
         self.policy_debug_viz = policy_debug_viz
+        self.scene_overlay = scene_overlay
+        self.set_sim_keyboard_enabled = set_sim_keyboard_enabled
         self.data = data
         self.camera = camera
         self.log = log
@@ -200,7 +204,9 @@ class MujocoViewerBackend:
         self._viewer_window = window
         self._mujoco_key_callback = previous
         self.keyboard_masked = True
-        self.log("MuJoCo keyboard input=masked (F12: unmask, T: camera tracking)")
+        if self.set_sim_keyboard_enabled is not None:
+            self.set_sim_keyboard_enabled(True)
+        self.log("MuJoCo keyboard input=masked; sim2sim controls=enabled (F12: switch, T: camera tracking)")
 
     def disable_keyboard_mask(self) -> None:
         if not self.keyboard_masked:
@@ -209,7 +215,9 @@ class MujocoViewerBackend:
             return
         glfw._glfw.glfwSetKeyCallback(self._viewer_window, self._mujoco_key_callback)
         self.keyboard_masked = False
-        self.log("MuJoCo keyboard input=enabled")
+        if self.set_sim_keyboard_enabled is not None:
+            self.set_sim_keyboard_enabled(False)
+        self.log("MuJoCo keyboard input=enabled; sim2sim controls=disabled")
 
     def toggle_tracking(self) -> None:
         if self.track_body_id is None:
@@ -230,14 +238,17 @@ class MujocoViewerBackend:
             with self.viewer.lock():
                 self.update_tracked_lookat()
                 self.video.capture(self.data, self.viewer.cam, self.viewer.opt,
-                                   self.policy_debug_viz, self.status_texts())
+                                   self.policy_debug_viz, self.status_texts(), self.scene_overlay)
         if self.viewer_tick % self.viewer_decim == 0:
             self.update_tracked_lookat()
             self.update_keyboard_help()
-            if self.policy_debug_viz is not None:
+            if self.policy_debug_viz is not None or self.scene_overlay is not None:
                 with self.viewer.lock():
                     self.viewer.user_scn.ngeom = 0
-                    self.policy_debug_viz.add_to_scene(self.viewer.user_scn)
+                    if self.policy_debug_viz is not None:
+                        self.policy_debug_viz.add_to_scene(self.viewer.user_scn)
+                    if self.scene_overlay is not None:
+                        self.scene_overlay(self.viewer.user_scn)
             self.viewer.sync()
         return True
 
@@ -288,7 +299,7 @@ class MujocoViewerBackend:
             viewer_actions.append("Debug Viz")
         if viewer_keys:
             rows.append((" / ".join(viewer_keys), " / ".join(viewer_actions)))
-        rows.extend((("F12", "MuJoCo shortcuts"), ("?", "Show / hide keys"), ("Esc", "Quit")))
+        rows.extend((("F12", "Sim / MuJoCo keys"), ("?", "Show / hide keys"), ("Esc", "Quit")))
         texts = ("\n".join(key for key, _ in rows), "\n".join(tip for _, tip in rows))
         return [(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, *texts)]
 
@@ -311,6 +322,8 @@ def create_viewer_backend(
     video: VideoConfig | None = None,
     simulation_speed: Callable[[], float] | None = None,
     controller_state: Callable[[], str] | None = None,
+    scene_overlay: Callable[[mujoco.MjvScene], None] | None = None,
+    set_sim_keyboard_enabled: Callable[[bool], None] | None = None,
 ) -> ViewerBackend:
     camera = load_viewer_camera_config(robot)
     if viewer == "mujoco":
@@ -325,5 +338,7 @@ def create_viewer_backend(
             video=video,
             simulation_speed=simulation_speed,
             controller_state=controller_state,
+            scene_overlay=scene_overlay,
+            set_sim_keyboard_enabled=set_sim_keyboard_enabled,
         )
     raise ValueError(f"unsupported viewer backend: {viewer}")

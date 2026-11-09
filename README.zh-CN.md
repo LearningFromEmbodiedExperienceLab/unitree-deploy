@@ -30,8 +30,10 @@ src/unitree_deploy/
 │   ├── transport/    # Unitree DDS 适配与遥控输入解码
 │   ├── trajectory/   # 轨迹录制与回放应用
 │   └── timing.py     # 共用的循环计时
-├── policy/           # ONNX policy wrapper
-├── obs/              # observation term
+├── policy/
+│   ├── base_policy.py  # 通用 ONNX 封装与 checkpoint 加载
+│   └── motion_tracking/  # 动作跟踪策略与参考数据
+├── obs/              # 共用观测项与策略专用观测项
 ├── visualization/    # 机器人状态可视化
 ├── utils/            # 通用工具
 └── robot_model/      # 内置 MuJoCo 机器人与地形资源
@@ -48,7 +50,7 @@ uv sync
 source .venv/bin/activate
 ```
 
-如果需要 viser 可视化依赖，用于实时机器人状态可视化：
+如果需要 mjviser 浏览器可视化依赖，用于实时机器人状态可视化：
 
 ```bash
 uv sync --extra viewer
@@ -66,8 +68,8 @@ unitree-sim-bridge --robot g1
 
 MuJoCo Viewer 窗口内显示移动、policy 和仿真控制的按键提示。
 按 `?`（`Shift` + `/`）可显示或隐藏提示。
-默认屏蔽原生键盘快捷键。按 `F12` 可恢复，再按一次重新屏蔽。
-按 `T` 可切换相机是否跟随机器人；屏蔽期间仿真控制键和 policy 可视化开关仍有效。相机跟随功能要求
+默认屏蔽原生键盘快捷键。在 Viewer 中按 `F12` 可恢复原生快捷键，同时禁用全局 sim2sim 控制键，避免终端输入触发仿真命令；再按一次恢复 sim2sim 控制并屏蔽原生快捷键。
+按 `T` 可切换相机是否跟随机器人。相机跟随功能要求
 机器人 `visualizer.yaml` 中的 `viewer.camera.track_body` 已配置。
 
 velocity command policy 运行时显示 mjlab 风格的速度箭头：蓝色/青色表示目标/实际线速度，
@@ -115,6 +117,19 @@ unitree-controller --mode sim --multi-ckpt ckpt/g1/multi_ckpt.yaml
 ```bash
 unitree-visualizer --mode sim --robot g1
 ```
+
+### 同机共享 RealSense
+
+采集进程通过 Linux 共享内存向 Viser 和 policy 提供最新一帧。
+
+```bash
+uv pip install pyrealsense2
+unitree-realsense --robot g1
+unitree-visualizer --mode real --robot g1 --net eth0 --camera
+```
+
+两端使用 `visualizer.yaml` 中相同的相机名。Policy 可通过
+`unitree_deploy.runtime.transport.realsense.RealSenseReader` 读取。
 
 回放已保存的轨迹，默认使用 Viser 前端：
 
@@ -194,6 +209,39 @@ unitree-z1-controller \
 `rt/lowcmd`/`rt/lowstate` 映射到 12 个 B2 actuator，将
 `rt/z1/lowcmd`/`rt/z1/lowstate` 映射到 7 个 Z1 actuator。两个 controller
 共用同一份仿真遥控器，因此同时运行时，`A`、`Start` 和 `X` 会作用于两个状态机。
+
+## Pico 人形遥操 / MimicLite
+
+在两个终端启动 G1 仿真和控制器：
+
+```bash
+unitree-sim-bridge --robot g1 --net lo
+unitree-controller --mode sim --robot g1 --net lo --ckpt ckpt/g1/mimic_lite
+```
+
+按 `Enter` 移到默认姿态。参考源就绪后按 `\`，先做手臂过渡，
+再保持参考首帧。看到就绪提示后按 `b` 播放。`g` 切换参考 ghost，`x` 回到 damping。
+空格暂停仿真和文件动作，`-` 和 `=` 同步调整播放倍速。
+
+在第三个终端选择参考源：
+
+```bash
+# any4hdmi G1 动作（保留数据集的 manifest.json）
+unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --motion-path /path/to/clip.npz
+# 或 Pico（启动 XRoboToolkit PC Service 并开启全身追踪）
+unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --human-height 1.75 --retarget gmr
+```
+
+动作源默认启动 G1 参考姿态的 mjviser 预览，并打印浏览器地址。
+需安装 `viewer` 可选依赖；无界面发布可加 `--no-visualizer`。
+
+也可直接给控制器传 `--motion-path`。播完或 DDS 参考中断时，GMT 继续跟踪最后有效帧。
+启动新的发布进程后，控制器会自动准备新首帧，就绪后按 `B` 播放。
+Pico：站直完成标定，用 Pico `X` 切换实时输入；需安装 `xrobotoolkit_sdk` 和选用的后端
+（支持 XRobot 的 GMR、FRAX 或 RoboKit）。
+
+真机将控制器改为 `--mode real`，两个进程用 `--net` 指定各自的 DDS 网卡。
+宇树手柄用 `A` → `Start` → `B`，`X` 回到 damping。
 
 ## 🧩 部署目录
 

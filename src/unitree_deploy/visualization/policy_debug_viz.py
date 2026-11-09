@@ -9,12 +9,11 @@ import mujoco
 import numpy as np
 
 from unitree_deploy.obs.base_obs import CommandObservation
-from unitree_deploy.policy.motion_tracking import MotionTrackingPolicy
 from unitree_deploy.robot_model.robot_config import RobotModel
 from unitree_deploy.utils.yaml_utils import load_yaml
 
 
-POLICY_DEBUG_VIZ_TOPIC = 'rt/policy_visuals'
+POLICY_DEBUG_VIZ_TOPIC = 'rt/policy_debug_viz'
 
 
 @dataclass(frozen=True)
@@ -60,13 +59,14 @@ def policy_debug_viz_packet(policy, settings, command=None) -> str:
     packet = {'enabled': bool(settings.get('enabled', True)),
               'toggle_key': str(settings.get('toggle_key', 'g')).lower(), 'active': False,
               'color': color, 'opacity': opacity, 'velocity_command': None}
-    if isinstance(policy, MotionTrackingPolicy) and policy.heading is not None:
-        ref = policy.motion_reference
-        packet.update(active=True, joint_names=policy.obs_joint_order,
-                      joint_pos=ref['joint_pos'].tolist(),
-                      root_pos=ref['body_pos_w'][policy.pelvis_index].tolist(),
-                      root_quat=ref['body_quat_w'][policy.pelvis_index].tolist())
-    elif policy is not None and not isinstance(policy, MotionTrackingPolicy):
+    reference_pose = getattr(policy, 'reference_pose', None)
+    if reference_pose is not None:
+        ref = reference_pose()
+        if ref is not None:
+            packet.update(active=True, joint_names=list(ref.joint_names),
+                          joint_pos=ref.joint_pos.tolist(), root_pos=ref.root_pos.tolist(),
+                          root_quat=ref.root_quat.tolist())
+    elif policy is not None:
         for term in policy.observation.observations:
             if isinstance(term, CommandObservation) and term.base_dim == 3:
                 packet['velocity_command'] = np.clip(

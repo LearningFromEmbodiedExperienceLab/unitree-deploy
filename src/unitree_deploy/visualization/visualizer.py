@@ -9,7 +9,8 @@ import numpy as np
 import viser
 from unitree_deploy.config.defaults import DEFAULT_MODE, LOWSTATE_TOPIC, ODOM_TOPIC
 from unitree_deploy.robot_model.robot_config import DEFAULT_ROBOT, DEFAULT_TERRAIN, RobotModel, load_robot_model
-from unitree_deploy.visualization.scene_config import RealSenseCameraConfig, StandaloneMujocoScene
+from unitree_deploy.sensors.realsense import RealSenseCaptureConfig
+from unitree_deploy.visualization.mujoco_scene import RealSenseCameraConfig, RobotScene
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
@@ -80,7 +81,7 @@ class RobotStateVisualizer:
         self.joint_map = self.build_joint_map()
 
         self.viser_server = viser.ViserServer()
-        self.viser_scene = StandaloneMujocoScene.create(
+        self.viser_scene = RobotScene(
             self.viser_server,
             self.model,
             show_camera_frustums=self.show_camera_frustums,
@@ -172,20 +173,10 @@ class RobotStateVisualizer:
 
         configs = []
         for item in self.cfg.get("cameras", []):
-            width = int(item.get("width", item.get("color_width", 640)))
-            height = int(item.get("height", item.get("color_height", 480)))
             configs.append(
                 RealSenseCameraConfig(
-                    camera_name=item.get("camera_name", item.get("name", "realsense")),
+                    **vars(RealSenseCaptureConfig.from_dict(item)),
                     pose_camera_name=item.get("pose_camera_name"),
-                    serial_number=item.get("serial_number", item.get("serial")),
-                    color_width=int(item.get("color_width", width)),
-                    color_height=int(item.get("color_height", height)),
-                    depth_width=int(item.get("depth_width", width)),
-                    depth_height=int(item.get("depth_height", height)),
-                    fps=int(item.get("fps", 30)),
-                    enable_depth=bool(item.get("enable_depth", True)),
-                    align_depth_to_color=bool(item.get("align_depth_to_color", True)),
                     depth_visualization_min_m=float(item.get("depth_visualization_min_m", 0.1)),
                     depth_visualization_max_m=float(item.get("depth_visualization_max_m", 3.0)),
                     frustum_scale=float(item.get("frustum_scale", 0.15)),

@@ -63,13 +63,13 @@ class PolicyManager:
         return self.profiles[self.active_name]
 
     @classmethod
-    def load(cls, ckpt_path: Path, multi_ckpt: Path | None = None) -> PolicyManager:
+    def load(cls, ckpt_path: Path, multi_ckpt: Path | None = None, *, motion_path: Path | None = None) -> PolicyManager:
         ckpt_path = ckpt_path.expanduser().resolve()
         if multi_ckpt is None:
             policy_yaml_path = ckpt_path
             if ckpt_path.is_dir():
                 policy_yaml_path = ckpt_path / "policy.yaml"
-            profile = build_ckpt_profile("default", policy_yaml_path)
+            profile = build_ckpt_profile("default", policy_yaml_path, motion_path=motion_path)
             return cls(
                 {"default": profile},
                 "default",
@@ -140,8 +140,8 @@ def resolve_policy_yaml(base_dir: Path, spec) -> Path:
     return path.resolve()
 
 
-def build_ckpt_profile(name: str, policy_yaml_path: Path) -> CkptProfile:
-    policy = load_policy(policy_yaml_path)
+def build_ckpt_profile(name: str, policy_yaml_path: Path, *, motion_path: Path | None = None) -> CkptProfile:
+    policy = load_policy(policy_yaml_path, motion_path=motion_path)
     imu_source = parse_imu_source(policy)
     sdk_joint_order = list(policy.sdk_joint_order)
     obs_joint_order = list(policy.obs_joint_order)

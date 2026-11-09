@@ -1504,6 +1504,7 @@ dependencies = [
     { name = "pynput" },
     { name = "pyyaml" },
     { name = "scipy" },
+    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -1519,6 +1520,7 @@ requires-dist = [
     { name = "pynput" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "scipy", specifier = ">=1.17.1" },
+    { name = "tqdm" },
     { name = "trimesh", marker = "extra == 'viewer'" },
     { name = "viser", marker = "extra == 'viewer'", specifier = ">=1.0.26" },
 ]

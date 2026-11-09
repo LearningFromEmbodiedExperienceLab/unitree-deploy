@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any
 
+from unitree_deploy.config.defaults import DAMPING_STATE
 from ..config import parse_transitions
 
 
@@ -20,6 +21,9 @@ class ControllerState(ABC):
     def on_enter(self, controller) -> None:
         """Optional setup when entering the state."""
 
+    def can_enter(self, controller) -> bool:
+        return True
+
     @abstractmethod
     def step(self, controller) -> str | None:
         """Run one control tick; return a next state name or None to stay."""
@@ -30,3 +34,7 @@ class ControllerState(ABC):
 
     def next_on_done(self) -> str | None:
         return self.transitions.get("done")
+
+    def on_motion_unavailable(self, controller, exc) -> str:
+        controller.log(f"{exc}; returning to damping")
+        return self.next_for_button("X") or DAMPING_STATE

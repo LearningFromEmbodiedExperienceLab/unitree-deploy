@@ -59,6 +59,7 @@ class RuntimeConfig:
     robot: str | None
     multi_ckpt: Path | None = None
     state_machine: Path | None = None
+    motion_path: Path | None = None
 
 
 class Controller:
@@ -71,7 +72,7 @@ class Controller:
     def __init__(self, config: RuntimeConfig):
         self.config = config
         self.ckpt_dir = config.ckpt_dir.expanduser().resolve()
-        self.policy_manager = PolicyManager.load(self.ckpt_dir, config.multi_ckpt)
+        self.policy_manager = PolicyManager.load(self.ckpt_dir, config.multi_ckpt, motion_path=config.motion_path)
         if config.multi_ckpt is None:
             self.ckpt_dir = self.active_profile.policy_yaml_path.parent
         self.robot = config.robot or self.active_profile.policy.config.get("robot", DEFAULT_ROBOT)
@@ -373,8 +374,14 @@ class Controller:
     # ----- State dispatch -----
 
     def step(self) -> None:
+        policy = self.active_profile.policy
+        set_timing = getattr(policy, "set_simulation_timing", None)
         with self.lock:
             paused = self.simulation_paused
+            if set_timing is not None:
+                speed = self.simulation_speed
+        if set_timing is not None:
+            set_timing(paused, speed)
         if not paused:
             if self.policy_manager.switch.enabled and self.button_pressed(self.policy_manager.switch.button):
                 self.switch_to_next_policy()
@@ -399,7 +406,7 @@ class Controller:
             f"imu={self.active_profile.imu_source or 'lowstate'} "
             f"available={','.join(self.policy_manager.profiles)}"
         )
-        log(f"state_machine={self.state_machine_path or 'default'}")
+        log(f"state_machine={self.state_machine_path or 'default'} initial={self.state_machine.initial}")
         if self.config.mode == "sim":
             switch_hint = (
                 f", {sim_key_for_button(self.policy_manager.switch.button)} -> switch policy"
@@ -411,14 +418,11 @@ class Controller:
                 f"{sim_key_for_button('Start')} -> Start, "
                 f"{sim_key_for_button('X')} -> Damping{switch_hint}, R -> reset sim"
             )
-        control_hint = (
-            "A: damping/policy -> default pose, "
-            "Start: default pose -> run policy, "
-            "X: back to zero torque"
-        )
-        if self.policy_manager.switch.enabled:
-            control_hint += f", {self.policy_manager.switch.button}: switch policy"
-        log(control_hint)
+        if self.state_machine_path is None:
+            control_hint = "A: damping/policy -> default pose, Start: default pose -> run policy, X: damping"
+            if self.policy_manager.switch.enabled:
+                control_hint += f", {self.policy_manager.switch.button}: switch policy"
+            log(control_hint)
         log("waiting for lowstate...")
 
         timer = LoopTimer(float(self.active_profile.policy.policy_step_dt))
@@ -480,6 +484,10 @@ class Controller:
             self.secondary_imu_sub.Close()
         if self.odom_sub is not None:
             self.odom_sub.Close()
+        for profile in self.policy_manager.profiles.values():
+            close = getattr(profile.policy, "close", None)
+            if close is not None:
+                close()
         self.lowcmd_pub.Close()
         if self.controller_state_pub is not None:
             self.controller_state_pub.Close()

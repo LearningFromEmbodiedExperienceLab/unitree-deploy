@@ -209,24 +209,18 @@ class ViserTrajectoryReplayApp(TrajectoryReplayBase):
     def __init__(self, config: RuntimeConfig) -> None:
         super().__init__(config)
         import viser
-        from unitree_deploy.visualization.scene_config import StandaloneMujocoScene
+        from unitree_deploy.visualization.mujoco_scene import RobotScene
 
         self.syncing_gui = False
-        self.follow_robot = True  # Keep the camera centered unless the user opts out.
-        self.follow_offset = np.array([2.8, -2.8, 1.8], dtype=np.float64)
-        self.follow_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
         self.server = viser.ViserServer()
-        self.scene = StandaloneMujocoScene.create(
+        self.scene = RobotScene(
             self.server,
             self.model,
             show_camera_frustums=False,
-            real_sense_configs=None,
         )
         self.controls = self.build_controls()
-        self.server.on_client_connect(self.on_client_connect)
         self.apply_frame(0)
-        self._apply_camera_follow()
 
     def build_controls(self) -> dict[str, object]:
         controls: dict[str, object] = {}
@@ -245,11 +239,6 @@ class ViserTrajectoryReplayApp(TrajectoryReplayBase):
                 self.speed,
                 hint="Playback speed multiplier",
             )
-            controls["follow"] = self.server.gui.add_checkbox(
-                "Follow",
-                True,
-                hint="Keep the camera centered on the robot",
-            )
             controls["frame"] = self.server.gui.add_slider(
                 "Frame",
                 0,
@@ -265,7 +254,6 @@ class ViserTrajectoryReplayApp(TrajectoryReplayBase):
 
         controls["paused"].on_update(self.on_paused_changed)
         controls["speed"].on_update(self.on_speed_changed)
-        controls["follow"].on_update(self.on_follow_changed)
         controls["frame"].on_update(self.on_frame_changed)
         controls["step_back"].on_click(self.on_step_back)
         controls["step_next"].on_click(self.on_step_next)
@@ -281,13 +269,6 @@ class ViserTrajectoryReplayApp(TrajectoryReplayBase):
         if self.syncing_gui:
             return
         self.set_speed(float(event.target.value))
-
-    def on_follow_changed(self, event) -> None:
-        if self.syncing_gui:
-            return
-        with self.lock:
-            self.follow_robot = bool(event.target.value)
-        self._apply_camera_follow()
 
     def on_frame_changed(self, event) -> None:
         if self.syncing_gui:
@@ -323,33 +304,7 @@ class ViserTrajectoryReplayApp(TrajectoryReplayBase):
     def apply_frame(self, frame: int) -> None:
         super().apply_frame(frame)
         self.scene.update_from_mjdata(self.data)
-        self._apply_camera_follow()
         self.controls["status_text"].content = self.status_markdown()
-
-    def on_client_connect(self, client) -> None:
-        # New clients should start on the robot instead of an arbitrary default camera.
-        self._set_client_camera(client)
-
-    def _base_position(self) -> np.ndarray:
-        if self.data.qpos.shape[0] < 3:
-            return np.zeros(3, dtype=np.float64)
-        return np.asarray(self.data.qpos[:3], dtype=np.float64)
-
-    def _apply_camera_follow(self) -> None:
-        if not self.follow_robot:
-            return
-        for client in self.server.get_clients().values():
-            self._set_client_camera(client)
-
-    def _set_client_camera(self, client) -> None:
-        if not self.follow_robot:
-            return
-        target = self._base_position()
-        # Fixed offset keeps the robot centered without requiring per-user camera logic.
-        position = target + self.follow_offset
-        client.camera.position = position
-        client.camera.look_at = target
-        client.camera.up_direction = self.follow_up
 
     def run(self) -> None:
         # Keep the UI responsive by ticking the replay in a short loop.
@@ -469,6 +424,3 @@ class MujocoTrajectoryReplayApp(TrajectoryReplayBase):
     def close(self, *_args) -> None:
         super().close(*_args)
         self.viewer = None
-
-
-TrajectoryReplayApp = ViserTrajectoryReplayApp
