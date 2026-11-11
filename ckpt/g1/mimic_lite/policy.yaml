@@ -75,7 +75,7 @@ observations:
   params:
     field: ref_body_pos_future_local
     future_steps: [-8, -4, -2, 0, 1, 2, 3, 4]
-    body_names: [pelvis]
+    body_names: ["pelvis"]
   input: command
 - type: motion_reference_window
   history_len: 1

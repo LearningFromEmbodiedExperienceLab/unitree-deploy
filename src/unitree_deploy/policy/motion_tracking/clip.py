@@ -6,9 +6,11 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
+from ...obs.motion_tracking_obs import reference_velocities
+
 
 class Any4HDMIMotionClip:
-    def __init__(self, path: Path, joint_names, *, dt, future_steps):
+    def __init__(self, path: Path, joint_names, *, dt, future_steps, include_endpoint=True):
         manifest_path = next(
             (parent / "manifest.json" for parent in path.parents if (parent / "manifest.json").is_file()),
             None,
@@ -38,9 +40,10 @@ class Any4HDMIMotionClip:
         if not np.isfinite(qpos).all() or not np.allclose(np.linalg.norm(qpos[:, 3:7], axis=1), 1, atol=1e-3):
             raise ValueError(f"Invalid joint pose or root quaternion in {path}")
 
-        # Keep the endpoint even if the source duration is not a whole policy step.
+        # Some training exports stop at the last whole control step instead.
         duration = (len(qpos) - 1) * source_dt
-        num_steps = int(np.ceil(duration / dt - 1e-9)) + 1
+        num_steps = (int(np.ceil(duration / dt - 1e-9)) if include_endpoint else
+                     int(np.floor(duration / dt + 1e-6))) + 1
         times = np.minimum(np.arange(num_steps) * dt, duration)
         source_times = np.arange(len(qpos)) * source_dt
         columns = [*range(3), *range(7, qpos.shape[1])]
@@ -51,6 +54,8 @@ class Any4HDMIMotionClip:
         self.joint_pos = positions[:, 3:].astype(np.float32)
         self.body_pos_w = positions[:, None, :3].astype(np.float32)
         self.body_quat_w = rotations.as_quat()[:, None, [3, 0, 1, 2]].astype(np.float32)
+        self.dt = dt
+        self.velocities = reference_velocities(vars(self), dt)
         self.steps = np.asarray(sorted(set([0, *future_steps])), dtype=int)
         self.session = str(path)
         self.reset()
@@ -61,11 +66,15 @@ class Any4HDMIMotionClip:
 
     def sample(self, *, advance=True):
         last = len(self.joint_pos) - 1
+        requested = self.frame + self.steps
         if advance:
-            indices = np.clip(self.frame + self.steps, 0, last)
+            indices = np.clip(requested, 0, last)
             self.finished = self.frame == last
             self.frame = min(self.frame + 1, last)
         else:
             indices = np.zeros_like(self.steps)
-        return {"session": self.session, "joint_pos": self.joint_pos[indices],
+        result = {"session": self.session, "joint_pos": self.joint_pos[indices],
                 "body_pos_w": self.body_pos_w[indices], "body_quat_w": self.body_quat_w[indices]}
+        result.update({name: value[indices] for name, value in self.velocities.items()})
+        result["valid"] = (requested >= 0) & (requested <= last) if advance else np.zeros_like(self.steps, dtype=bool)
+        return result

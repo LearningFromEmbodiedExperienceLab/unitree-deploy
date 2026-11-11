@@ -71,6 +71,7 @@ class ArmTransitionState(ControllerState):
         return True
 
     def on_enter(self, controller) -> None:
+        self.handoff_ready = False
         if self.direction != "to_reference":
             controller.activate_policy(self.locomotion_policy)
         profile = controller.active_profile
@@ -93,8 +94,14 @@ class ArmTransitionState(ControllerState):
             first_q = dict(zip(motion.obs_joint_order, motion.policy.first_reference_q()))
             self.motion_q = np.array([first_q[name] for name in profile.obs_joint_order])
 
+    def next_for_button(self, button: str) -> str | None:
+        if button != "X" and not self.handoff_ready:
+            return None
+        return super().next_for_button(button)
+
     def step(self, controller) -> str | None:
         if not self.enabled:
+            self.handoff_ready = True
             return self.next_on_done()
         profile = controller.active_profile
         policy = profile.policy
@@ -159,6 +166,9 @@ class ArmTransitionState(ControllerState):
         handoff_ready = self.entry_ema.remaining == 0 and ratio >= 1.0 and np.allclose(
             target[self.arm_indices], arm_goal, atol=1e-6, rtol=0
         )
+        if handoff_ready and not self.handoff_ready and "B" in self.transitions:
+            controller.log("arm transition complete; press B to hold the first reference frame")
+        self.handoff_ready = handoff_ready
         if handoff_ready:
             return self.next_on_done()
         return None

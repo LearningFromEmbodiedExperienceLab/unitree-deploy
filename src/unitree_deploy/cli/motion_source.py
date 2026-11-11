@@ -32,7 +32,9 @@ class ReferenceKinematics:
 
         if config["robot"] != "g1":
             raise ValueError("Pico deployment currently supports G1")
-        self.model = mujoco.MjModel.from_xml_path(str(ROBOT_MODEL_ROOT / "g1/g1.xml"))
+        spec = mujoco.MjSpec.from_file(str(ROBOT_MODEL_ROOT / "g1/g1.xml"))
+        spec.worldbody.add_geom(name="floor", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[0, 0, .01])
+        self.model = spec.compile()
         self.data = mujoco.MjData(self.model)
         self.joint_names = tuple(config["action_joint_order"])
         self.body_names = tuple(config["body_names"])
@@ -136,7 +138,8 @@ def main():
         if config["body_names"] != [root_body_name]:
             parser.error("File publishing requires a policy with only the root body in its reference")
         joint_names = tuple(config["action_joint_order"])
-        clip = Any4HDMIMotionClip(args.motion_path.expanduser().resolve(), joint_names, dt=dt, future_steps=[])
+        clip = Any4HDMIMotionClip(args.motion_path.expanduser().resolve(), joint_names, dt=dt, future_steps=[],
+                                 include_endpoint=config.get("motion_include_endpoint", True))
     else:
         backends = {
             "gmr": "unitree_deploy.teleop.retarget:GMRRetargeter",

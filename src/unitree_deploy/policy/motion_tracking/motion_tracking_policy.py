@@ -91,6 +91,21 @@ class MotionTrackingPolicy(BasePolicy):
             name = spec.get("input", self.input_name)
             self.input_slices.setdefault(name, []).append(slice(offset, offset + observation.size))
             offset += observation.size
+        self.input_indices = {}
+        for name, parts in self.input_slices.items():
+            mode = self.config.get("obs_input_concat_modes", {}).get(name, "term_major")
+            if mode == "history_major":
+                terms = [obs for spec, obs in zip(self.config["observations"], self.observation.observations)
+                         if spec.get("input", self.input_name) == name]
+                if len({obs.history_len for obs in terms}) != 1:
+                    raise ValueError("History-major inputs require equal term history lengths")
+                indices = [np.arange(part.start, part.stop).reshape(obs.history_len, obs.base_dim)
+                           for part, obs in zip(parts, terms)]
+                self.input_indices[name] = np.concatenate(indices, axis=1).reshape(-1)
+            elif mode == "term_major":
+                self.input_indices[name] = np.concatenate([np.arange(part.start, part.stop) for part in parts])
+            else:
+                raise ValueError(f"Unknown observation input concatenation mode: {mode}")
         if set(self.input_slices) != {item.name for item in inputs}:
             raise ValueError("Reference tracking ONNX input names differ from policy.yaml")
         self.input_shapes = {item.name: item.shape for item in inputs}
@@ -103,8 +118,8 @@ class MotionTrackingPolicy(BasePolicy):
             raise ValueError("Reference tracking ONNX action shape differs from policy.yaml")
         future_steps = []
         for observation in self.observation.observations:
+            observation.policy = self
             if isinstance(observation, MotionReferenceWindowObservation):
-                observation.policy = self
                 future_steps.extend(observation.future_steps)
         if not future_steps:
             raise ValueError("Reference tracking requires reference observations")
@@ -121,6 +136,7 @@ class MotionTrackingPolicy(BasePolicy):
             path = (self.policy_yaml_path.parent / Path(motion_path).expanduser()).resolve()
             self.clip = self.motion = Any4HDMIMotionClip(
                 path, self.action_joint_order, dt=self.policy_step_dt, future_steps=future_steps,
+                include_endpoint=self.config.get("motion_include_endpoint", True),
             )
         self.reference_hold = None
         self.reference_session = None
@@ -180,8 +196,8 @@ class MotionTrackingPolicy(BasePolicy):
     def _infer_action(self, obs_vector):
         if self.reference_source == "embedded":
             return self._run(obs_vector, [self.action_output_name])[0].reshape(-1)
-        inputs = {name: np.concatenate([obs_vector[part] for part in parts]).reshape(self.input_shapes[name])
-                  for name, parts in self.input_slices.items()}
+        inputs = {name: obs_vector[indices].reshape(self.input_shapes[name])
+                  for name, indices in self.input_indices.items()}
         return self.session.run([self.action_output_name], inputs)[0].reshape(-1)
 
     def compute_target_q(self, context):
@@ -203,19 +219,17 @@ class MotionTrackingPolicy(BasePolicy):
         if not embedded and not np.isfinite(obs).all():
             raise MotionUnavailable("Reference tracking observation contains nonfinite values")
         self.action[:] = self._infer_action(obs)
-        if embedded:
-            # Preserve the embedded actor's BasePolicy history update before clipping.
-            previous = self.action * self.action_scaling if self.obs_use_scaled_prev_action else self.action
-            self.previous_action_observation.record_action(previous)
-        elif not np.isfinite(self.action).all():
+        if not np.isfinite(self.action).all():
             raise MotionUnavailable("Reference tracking actor produced nonfinite actions")
         if self.action_clip is not None:
             np.clip(self.action, -self.action_clip, self.action_clip, out=self.action)
-        self.previous_action_observation.record_action(self.action)
+        previous = self.action * self.action_scaling if self.obs_use_scaled_prev_action else self.action
+        self.previous_action_observation.record_action(previous)
 
         base = self.default_joint_pos_action
-        if embedded and self.config.get("use_reference_residual", False):
-            base = self.motion_reference["joint_pos"]
+        if self.config.get("use_reference_residual", False):
+            base = (self.motion_reference["joint_pos"] if embedded else
+                    self.reference_window["joint_pos"][np.searchsorted(self.motion.steps, 0)])
         self.target_q[:] = self.default_joint_pos
         self.target_q[self.action_to_obs_indices] = base + self.action_scaling * self.action
         if embedded:
@@ -293,6 +307,10 @@ class MotionTrackingPolicy(BasePolicy):
         for name in ("joint_pos", "body_pos_w", "body_quat_w"):
             value = getattr(frame, name) if frame is not None else window[name][current]
             frozen[name] = np.repeat(value[None], len(self.motion.steps), axis=0)
+        for name in ("joint_vel", "body_lin_vel_w", "body_ang_vel_w"):
+            if name in frozen:
+                frozen[name] = np.zeros_like(frozen[name])
+        frozen["valid"] = np.zeros(len(self.motion.steps), dtype=bool)
         return frozen
 
     def _sample_reference(self, *, hold):

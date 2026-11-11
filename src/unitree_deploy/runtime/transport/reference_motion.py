@@ -1,7 +1,7 @@
 """Versioned reference poses over DDS String_, matching the existing SDK transport."""
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import threading
 import time
@@ -103,7 +103,15 @@ class MotionBuffer:
         try:
             frame = MotionFrame.decode(payload)
             if frame.joint_names != self.joint_names or frame.body_names != self.body_names:
-                raise ValueError("reference motion joint/body order differs from policy.yaml")
+                if set(frame.joint_names) != set(self.joint_names) or set(frame.body_names) != set(self.body_names):
+                    raise ValueError("reference motion joint/body names differ from policy.yaml")
+                joint_index = {name: i for i, name in enumerate(frame.joint_names)}
+                body_index = {name: i for i, name in enumerate(frame.body_names)}
+                joints = [joint_index[name] for name in self.joint_names]
+                bodies = [body_index[name] for name in self.body_names]
+                frame = replace(frame, joint_names=self.joint_names, body_names=self.body_names,
+                                joint_pos=frame.joint_pos[joints], body_pos_w=frame.body_pos_w[bodies],
+                                body_quat_w=frame.body_quat_w[bodies])
         except (ValueError, KeyError, TypeError) as exc:
             with self.lock:
                 self.error = str(exc)
@@ -147,6 +155,8 @@ class MotionBuffer:
             current = targets[np.searchsorted(self.steps, 0)]
             index = np.searchsorted(times, current, side="right") - 1
             result["file_finished"] = frames[index].file_finished
+        finished_times = [frame.sample_time for frame in frames if frame.file_finished]
+        result["valid"] = targets <= finished_times[0] + 1e-8 if finished_times else np.ones(len(targets), dtype=bool)
         indices = np.clip(np.searchsorted(times, targets, side="right"), 1, len(times) - 1)
         if np.any(times[indices] - times[indices - 1] > self.timeout):
             raise ReferenceStreamLost("reference motion contains a data gap")

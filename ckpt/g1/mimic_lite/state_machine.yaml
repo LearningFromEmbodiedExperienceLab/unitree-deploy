@@ -1,4 +1,4 @@
-# A moves to the default pose, Start prepares the arms for the first frame, and B plays.
+# A moves to the default pose, Start prepares the arms, B confirms first-frame hold, then B plays.
 # Clip completion or a stopped source leaves GMT tracking the last valid frame.
 initial: damped
 
@@ -21,7 +21,7 @@ states:
     duration: 2.0
     max_joint_speed: 1.0
     transitions:
-      done: hold_first_frame_motion
+      B: hold_first_frame_motion
       reference_lost: run_gmt_policy
       X: damped
 

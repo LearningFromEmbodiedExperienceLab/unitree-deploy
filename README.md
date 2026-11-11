@@ -308,7 +308,7 @@ unitree-controller --mode sim --robot g1 --net lo --ckpt ckpt/g1/mimic_lite
 ```
 
 `Enter` to move to the default pose. Once the reference source is ready, press `\` to prepare.
-After initial pose is ready, press `b` play.
+After the arm transition completes, press `b` to confirm first-frame hold. Once ready, press `b` again to play.
 
 Press `g` to toggle the reference ghost and `x` for damping.
 
@@ -325,17 +325,32 @@ unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --human-height 1.7
 ```
 
 The motion source starts an mjviser preview of the G1 reference and prints its browser URL.
-Install the `viewer` extras; use `--no-visualizer` for headless publishing.
+From the `unitree-deploy` repository root, install the `viewer` extras and link
+the Any4HDMI checkout into the same environment:
+
+```bash
+uv sync --extra viewer
+uv pip install --no-deps -e /mnt/datasets/any4hdmi
+```
+
+Replace `/mnt/datasets/any4hdmi` with your Any4HDMI checkout path. `-e` installs
+it in editable mode, so source changes are picked up without reinstalling;
+restart `unitree-motion-source` after changes. `--no-deps` avoids installing
+Any4HDMI's training dependencies.
+
+The preview stays independent of DDS publishing; use `--no-visualizer` for headless publishing.
+During simulation, it follows the controller's buffered, aligned reference from `rt/policy_debug_viz`,
+matching the sim-bridge ghost. It falls back to the source pose when the controller reference is inactive or has not arrived for 0.5 seconds.
 
 For local files you can also pass `--motion-path` directly to the controller.
 GMT keeps tracking the last valid frame after playback or a lost DDS source.
-Start the next publisher to prepare its first frame, then press `B` to play.
+Start the next publisher to prepare its arms, press `B` to confirm first-frame hold, then press `B` again when ready to play.
 
 For Pico, stand upright for calibration and use Pico `X` to toggle live input.
 Install `xrobotoolkit_sdk` and the selected backend (XRobot-enabled GMR, FRAX, or RoboKit).
 
 On hardware, use `--mode real` and set the DDS interface with `--net` on both
-processes. The Unitree remote uses `A` → `Start` → `B`, with `X` for damping.
+processes. The Unitree remote uses `A` → `Start` → `B` (confirm) → `B` (play), with `X` for damping.
 
 ## 🧩 Deployment Folders
 

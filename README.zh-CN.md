@@ -220,7 +220,7 @@ unitree-controller --mode sim --robot g1 --net lo --ckpt ckpt/g1/mimic_lite
 ```
 
 按 `Enter` 移到默认姿态。参考源就绪后按 `\`，先做手臂过渡，
-再保持参考首帧。看到就绪提示后按 `b` 播放。`g` 切换参考 ghost，`x` 回到 damping。
+完成后按 `b` 确认进入参考首帧保持。看到就绪提示后再按 `b` 播放。`g` 切换参考 ghost，`x` 回到 damping。
 空格暂停仿真和文件动作，`-` 和 `=` 同步调整播放倍速。
 
 在第三个终端选择参考源：
@@ -233,15 +233,29 @@ unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --human-height 1.7
 ```
 
 动作源默认启动 G1 参考姿态的 mjviser 预览，并打印浏览器地址。
-需安装 `viewer` 可选依赖；无界面发布可加 `--no-visualizer`。
+在 `unitree-deploy` 仓库根目录运行，将 `viewer` 可选依赖及 Any4HDMI 共享查看器
+安装到同一个环境中：
+
+```bash
+uv sync --extra viewer
+uv pip install --no-deps -e /mnt/datasets/any4hdmi
+```
+
+将 `/mnt/datasets/any4hdmi` 替换为你的 Any4HDMI 仓库路径。`-e` 使用可编辑安装，
+修改源码后无需重新安装，只需重启 `unitree-motion-source`。
+`--no-deps` 避免安装 Any4HDMI 的训练依赖。
+
+预览独立于 DDS 发布；无界面发布可加 `--no-visualizer`。
+仿真时，预览通过 `rt/policy_debug_viz` 显示控制器缓冲并对齐后的参考姿态，
+与 sim-bridge ghost 一致；控制器参考未激活或超过 0.5 秒未更新时，恢复显示动作源姿态。
 
 也可直接给控制器传 `--motion-path`。播完或 DDS 参考中断时，GMT 继续跟踪最后有效帧。
-启动新的发布进程后，控制器会自动准备新首帧，就绪后按 `B` 播放。
+启动新的发布进程后，控制器会自动准备手臂，完成后按 `B` 确认保持新首帧，就绪后再按 `B` 播放。
 Pico：站直完成标定，用 Pico `X` 切换实时输入；需安装 `xrobotoolkit_sdk` 和选用的后端
 （支持 XRobot 的 GMR、FRAX 或 RoboKit）。
 
 真机将控制器改为 `--mode real`，两个进程用 `--net` 指定各自的 DDS 网卡。
-宇树手柄用 `A` → `Start` → `B`，`X` 回到 damping。
+宇树手柄用 `A` → `Start` → `B`（确认）→ `B`（播放），`X` 回到 damping。
 
 ## 🧩 部署目录
 

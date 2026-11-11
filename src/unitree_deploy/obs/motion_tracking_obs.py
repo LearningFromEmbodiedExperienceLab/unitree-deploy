@@ -20,8 +20,30 @@ def yaw_rotation(wxyz):
     return Rotation.from_euler("z", rotation(wxyz).as_euler("xyz")[2])
 
 
+def reference_velocities(reference, dt):
+    """Differentiate a sampled pose window, keeping held endpoints out of the stencil."""
+    valid = np.flatnonzero(reference.get("valid", np.ones(len(reference["joint_pos"]), dtype=bool)))
+    velocities = {name: np.zeros_like(reference[source]) for name, source in (
+        ("joint_vel", "joint_pos"), ("body_lin_vel_w", "body_pos_w"),
+    )}
+    velocities["body_ang_vel_w"] = np.zeros_like(reference["body_pos_w"])
+    if len(valid) < 2:
+        return velocities
+    for name, source in (("joint_vel", "joint_pos"), ("body_lin_vel_w", "body_pos_w")):
+        velocities[name][valid] = np.gradient(reference[source][valid], dt, axis=0)
+    for body in range(reference["body_quat_w"].shape[1]):
+        rotations = rotation(reference["body_quat_w"][valid, body])
+        if len(valid) == 2:
+            omega = (rotations[1] * rotations[0].inv()).as_rotvec() / dt
+        else:
+            interior = (rotations[2:] * rotations[:-2].inv()).as_rotvec() / (2 * dt)
+            omega = np.concatenate((interior[:1], interior, interior[-1:]))
+        velocities["body_ang_vel_w"][valid, body] = omega
+    return velocities
+
+
 class MotionCommandObservation(ObservationBase):
-    def __init__(self, *, history_len, motion_command_terms, num_joints, dtype=np.float32):
+    def __init__(self, *, history_len, motion_command_terms, num_joints, history_order="oldest_first", dtype=np.float32):
         dimensions = {"joint_pos": num_joints, "joint_vel": num_joints, "base_height": 1,
                       "base_lin_vel": 3, "base_ang_vel": 3, "projected_gravity": 3}
         self.motion_command_terms = tuple(motion_command_terms)
@@ -31,7 +53,7 @@ class MotionCommandObservation(ObservationBase):
         if unknown:
             raise ValueError(f"Unknown motion_command_terms: {sorted(unknown)}")
         base_dim = sum(dimensions[name] for name in self.motion_command_terms)
-        super().__init__(base_dim=base_dim, history_len=history_len, dtype=dtype)
+        super().__init__(base_dim=base_dim, history_len=history_len, history_order=history_order, dtype=dtype)
 
     def compute(self, context):
         ref = self.policy.motion_reference
@@ -56,8 +78,8 @@ class MotionCommandObservation(ObservationBase):
 
 
 class MotionAnchorPositionObservation(ObservationBase):
-    def __init__(self, *, history_len, dtype=np.float32):
-        super().__init__(base_dim=3, history_len=history_len, dtype=dtype)
+    def __init__(self, *, history_len, history_order="oldest_first", dtype=np.float32):
+        super().__init__(base_dim=3, history_len=history_len, history_order=history_order, dtype=dtype)
 
     def compute(self, context):
         if context.base_pos_w is None:
@@ -68,11 +90,16 @@ class MotionAnchorPositionObservation(ObservationBase):
 
 
 class MotionAnchorOrientationObservation(ObservationBase):
-    def __init__(self, *, history_len, dtype=np.float32):
-        super().__init__(base_dim=6, history_len=history_len, dtype=dtype)
+    def __init__(self, *, history_len, history_order="oldest_first", dtype=np.float32):
+        super().__init__(base_dim=6, history_len=history_len, history_order=history_order, dtype=dtype)
 
     def compute(self, context):
         policy = self.policy
+        if policy.reference_source == "external":
+            current = np.searchsorted(policy.motion.steps, 0)
+            reference = rotation(policy.reference_window["body_quat_w"][current, policy.anchor_index])
+            robot = policy.robot_heading_offset * rotation(context.quat)
+            return (robot.inv() * reference).as_matrix()[:, :2].reshape(-1)
         ref_quat = policy.motion_reference["body_quat_w"][policy.anchor_index]
         return (policy.anchor_rotation.inv() * rotation(ref_quat)).as_matrix()[:, :2].reshape(-1)
 
@@ -168,11 +195,40 @@ class MotionReferenceWindowObservation(ObservationBase):
         return (anchor_yaw.inv() * rotation(values)).as_matrix()[:, :2, :].reshape(-1)
 
 
+class SuperMimicGoalObservation(MotionReferenceWindowObservation):
+    """Future reference features in SuperMimic's training coordinates and order."""
+
+    def __init__(self, *, num_joints, history_len=1):
+        if history_len != 1:
+            raise ValueError("SuperMimic goals contain a future window, not observation history.")
+        # Neighbors at -1 and 11 support central differences for live pose streams.
+        self.future_steps = list(range(-1, 12))
+        ObservationBase.__init__(self, base_dim=10 * (15 + 2 * num_joints), history_len=1)
+
+    def compute(self, context):
+        policy = self.policy
+        ref = policy.reference_window
+        current = np.searchsorted(policy.motion.steps, 0)
+        future = np.searchsorted(policy.motion.steps, np.arange(1, 11))
+        root = policy.root_index
+        heading = yaw_rotation(ref["body_quat_w"][current, root]).inv()
+        future_rotation = rotation(ref["body_quat_w"][future, root])
+        dp = heading.apply(ref["body_pos_w"][future, root] - ref["body_pos_w"][current, root])
+        orientation = (heading * future_rotation).as_matrix()[:, :, :2].reshape(10, 6)
+        velocity = ref if "joint_vel" in ref else reference_velocities(ref, policy.policy_step_dt)
+        valid = np.asarray(ref.get("valid", np.ones(len(ref["joint_pos"]), dtype=bool)))[future, None]
+        linear = future_rotation.inv().apply(velocity["body_lin_vel_w"][future, root])
+        angular = future_rotation.inv().apply(velocity["body_ang_vel_w"][future, root])
+        return np.concatenate((dp, orientation, np.where(valid, linear, 0), np.where(valid, angular, 0),
+                               ref["joint_pos"][future], np.where(valid, velocity["joint_vel"][future] * .1, 0)), axis=-1).reshape(-1)
+
+
 OBSERVATION_TYPES = {
     "motion_command": MotionCommandObservation,
-    # these two belows are privileged and require odometry
+    # Anchor position requires odometry; external anchor orientation uses the root IMU.
     "motion_anchor_pos_b": MotionAnchorPositionObservation,
     "motion_anchor_ori_b": MotionAnchorOrientationObservation,
     # mimic-lite style motion command observations with sparse history
     "motion_reference_window": MotionReferenceWindowObservation,
+    "supermimic_goal": SuperMimicGoalObservation,
 }
