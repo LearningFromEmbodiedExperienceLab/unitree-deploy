@@ -326,7 +326,8 @@ unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --motion-path /pat
 unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --human-height 1.75 --retarget gmr
 ```
 
-The motion source starts an mjviser preview of the G1 reference and prints its browser URL.
+The motion source runs without a preview by default. Add `--viser` to start a synchronized
+mjviser preview of the G1 reference and print its browser URL.
 From the `unitree-deploy` repository root, install the `viewer` extras and link
 the Any4HDMI checkout into the same environment:
 
@@ -340,7 +341,7 @@ it in editable mode, so source changes are picked up without reinstalling;
 restart `unitree-motion-source` after changes. `--no-deps` avoids installing
 Any4HDMI's training dependencies.
 
-The preview stays independent of DDS publishing; use `--no-visualizer` for headless publishing.
+The preview stays independent of DDS publishing; omit `--viser` for headless publishing.
 During simulation, it follows the controller's buffered, aligned reference from `rt/policy_debug_viz`,
 matching the sim-bridge ghost. It falls back to the source pose when the controller reference is inactive or has not arrived for 0.5 seconds.
 

@@ -117,7 +117,7 @@ def main():
     parser.add_argument("--net", default="lo", help="DDS network interface shared with controller.")
     parser.add_argument("--human-height", type=float, help="Pico operator height in meters (required for Pico).")
     parser.add_argument("--publish-hz", type=float, default=50)
-    parser.add_argument("--no-visualizer", action="store_true", help="Disable the Viser reference preview.")
+    parser.add_argument("--viser", action="store_true", help="Enable the synchronized Viser reference preview.")
     retarget = parser.add_mutually_exclusive_group()
     retarget.add_argument("--retarget", choices=("gmr", "frax", "robokit"), default="gmr")
     retarget.add_argument("--retarget-class", help="Custom backend as module:Class; overrides the built-in selector.")
@@ -184,7 +184,7 @@ def main():
         playback = ChannelSubscriber(f"{topic}/playback", String_)
         playback.Init(on_playback, 1)
         try:
-            if not args.no_visualizer:
+            if args.viser:
                 from unitree_deploy.visualization.motion_source import MotionSourceVisualizer
 
                 fk = ReferenceKinematics(config)
@@ -215,7 +215,7 @@ def main():
     timer = LoopTimer(dt)
     console.log("Pico reference paused. Press Pico X to pause or resume the reference.")
     try:
-        if not args.no_visualizer:
+        if args.viser:
             from unitree_deploy.visualization.motion_source import MotionSourceVisualizer
 
             fk.set_pose(retarget_session.pose)

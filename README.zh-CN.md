@@ -233,7 +233,7 @@ unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --motion-path /pat
 unitree-motion-source --config ckpt/g1/mimic_lite/policy.yaml --human-height 1.75 --retarget gmr
 ```
 
-动作源默认启动 G1 参考姿态的 mjviser 预览，并打印浏览器地址。
+动作源默认不启动预览；加 `--viser` 后启动 G1 参考姿态的 mjviser 同步预览，并打印浏览器地址。
 在 `unitree-deploy` 仓库根目录运行，将 `viewer` 可选依赖及 Any4HDMI 共享查看器
 安装到同一个环境中：
 
@@ -246,7 +246,7 @@ uv pip install --no-deps -e /mnt/datasets/any4hdmi
 修改源码后无需重新安装，只需重启 `unitree-motion-source`。
 `--no-deps` 避免安装 Any4HDMI 的训练依赖。
 
-预览独立于 DDS 发布；无界面发布可加 `--no-visualizer`。
+预览独立于 DDS 发布；不加 `--viser` 即为无界面发布。
 仿真时，预览通过 `rt/policy_debug_viz` 显示控制器缓冲并对齐后的参考姿态，
 与 sim-bridge ghost 一致；控制器参考未激活或超过 0.5 秒未更新时，恢复显示动作源姿态。
 
