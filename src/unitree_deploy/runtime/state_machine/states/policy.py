@@ -76,7 +76,7 @@ class PolicyState(ControllerState):
             controller.log("reference unavailable; tracking the last valid frame")
         self.has_reference = not reference_lost
         target_q = self.entry_ema.apply(policy_target_q)
-        if self.hold_reference and self.has_reference and waiting_for_ema and not self.entry_ema.remaining:
+        if self.hold_reference is True and self.has_reference and waiting_for_ema and not self.entry_ema.remaining:
             button = next((event for event in self.transitions if event not in {"X", "done", "reference_ready"}), None)
             if button is not None:
                 controller.log(f"first reference frame held; press {button} to play")

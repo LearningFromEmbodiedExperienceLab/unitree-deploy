@@ -221,6 +221,7 @@ unitree-controller --mode sim --robot g1 --net lo --ckpt ckpt/g1/mimic_lite
 
 按 `Enter` 移到默认姿态。参考源就绪后按 `\`，先做手臂过渡，
 完成后按 `b` 确认进入参考首帧保持。看到就绪提示后再按 `b` 播放。`g` 切换参考 ghost，`x` 回到 damping。
+MimicLite 和 LAFAN SuperMimic 播放时按 `b` 暂停参考动作并固定当前帧，再按 `b` 继续；暂停期间 policy 持续跟踪该姿态。
 空格暂停仿真和文件动作，`-` 和 `=` 同步调整播放倍速。
 
 在第三个终端选择参考源：

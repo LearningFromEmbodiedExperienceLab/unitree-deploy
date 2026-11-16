@@ -309,6 +309,8 @@ unitree-controller --mode sim --robot g1 --net lo --ckpt ckpt/g1/mimic_lite
 
 `Enter` to move to the default pose. Once the reference source is ready, press `\` to prepare.
 After the arm transition completes, press `b` to confirm first-frame hold. Once ready, press `b` again to play.
+For MimicLite and LAFAN SuperMimic, press `b` during playback to hold the current reference pose;
+press `b` again to resume. The policy keeps tracking the held pose while motion playback is paused.
 
 Press `g` to toggle the reference ghost and `x` for damping.
 

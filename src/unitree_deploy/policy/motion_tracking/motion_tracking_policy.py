@@ -276,7 +276,11 @@ class MotionTrackingPolicy(BasePolicy):
         self.anchor_position = self.data.xpos[self.anchor_id].copy()
         self.anchor_rotation = rotation(self.data.xquat[self.anchor_id])
 
-    def set_reference_hold(self, hold: bool) -> None:
+    def set_reference_hold(self, hold: bool | str) -> None:
+        """True holds frame zero; 'current' freezes the last consumed reference pose."""
+        if self.playback_requested and (hold == "current" or self.reference_hold == "current"):
+            rate = 0.0 if hold == "current" else self.playback_rate
+            self.motion.set_playback(self.reference_session, True, rate=rate)
         self.reference_hold = hold
         if hold and self.replacement_reference is not None:
             self._stop_playback()
@@ -294,7 +298,8 @@ class MotionTrackingPolicy(BasePolicy):
         if rate != self.playback_rate:
             self.playback_rate = rate
             if self.playback_requested:
-                self.motion.set_playback(self.reference_session, True, rate=rate)
+                self.motion.set_playback(self.reference_session, True,
+                                         rate=0.0 if self.reference_hold == "current" else rate)
 
     def _stop_playback(self) -> None:
         if self.playback_requested:
@@ -321,7 +326,8 @@ class MotionTrackingPolicy(BasePolicy):
                 self.replacement_reference = None
                 raise
         else:
-            window = self.clip.sample(advance=not hold)
+            window = (self.reference_window if hold == "current" and self.reference_window is not None
+                      else self.clip.sample(advance=not hold))
         session = window["session"]
         if self.reference_session is not None and session != self.reference_session:
             if window.get("file_playing"):
@@ -331,7 +337,9 @@ class MotionTrackingPolicy(BasePolicy):
                 self.replacement_reference = self._freeze_reference(window, first=True)
             raise ReferenceStreamLost("reference motion publisher changed")
         self.replacement_reference = None
-        if self.clip is None:
+        if hold == "current":
+            window = self._freeze_reference(self.reference_window if self.reference_window is not None else window)
+        elif self.clip is None:
             file_playing = window.get("file_playing")
             if hold:
                 if file_playing:
