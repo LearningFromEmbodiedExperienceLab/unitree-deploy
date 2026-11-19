@@ -261,14 +261,6 @@ def gain_array(
 
 
 def command_range(policy: BasePolicy) -> tuple[np.ndarray, np.ndarray]:
-    runtime_command_dim = policy.config.get("runtime_command_dim")
-    if runtime_command_dim is not None:
-        dim = int(runtime_command_dim)
-        return (
-            np.full(dim, -1.0, dtype=np.float64),
-            np.full(dim, 1.0, dtype=np.float64),
-        )
-
     for observation_spec in policy.config["observations"]:
         if observation_spec["type"] != "command":
             continue
@@ -281,6 +273,14 @@ def command_range(policy: BasePolicy) -> tuple[np.ndarray, np.ndarray]:
                 f"command_range must have shape (N, 2), got {command_range_array.shape}"
             )
         return command_range_array[:, 0], command_range_array[:, 1]
+
+    runtime_command_dim = policy.config.get("runtime_command_dim")
+    if runtime_command_dim is not None:
+        dim = int(runtime_command_dim)
+        return (
+            np.full(dim, -1.0, dtype=np.float64),
+            np.full(dim, 1.0, dtype=np.float64),
+        )
     raise KeyError("policy.yaml observations must include type: command")
 
 

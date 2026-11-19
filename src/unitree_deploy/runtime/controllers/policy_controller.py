@@ -194,7 +194,14 @@ class Controller:
             dtype=np.float64,
         )
         copy_dim = min(self.raw_command.size, joystick_command.size)
-        self.raw_command[:copy_dim] = joystick_command[:copy_dim]
+        joystick_command = joystick_command[:copy_dim]
+        if self.config.mode == "real":
+            command_min = profile.command_min[:copy_dim]
+            command_max = profile.command_max[:copy_dim]
+            neutral = np.clip(0.0, command_min, command_max)
+            scale = np.where(joystick_command < 0.0, neutral - command_min, command_max - neutral)
+            joystick_command = neutral + np.clip(joystick_command, -1.0, 1.0) * scale
+        self.raw_command[:copy_dim] = joystick_command
         np.clip(self.raw_command, profile.command_min, profile.command_max, out=self.command)
 
     # ----- Real-robot setup -----
