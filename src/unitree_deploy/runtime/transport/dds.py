@@ -73,6 +73,7 @@ def resolve_low_level_dds(robot: str | None) -> LowLevelDDS:
         )
 
     if robot_name in HG_ROBOTS:
+        has_secondary_imu = robot_name == "g1"
         return LowLevelDDS(
             type="unitree_hg",
             lowcmd_topic=LOWCMD_TOPIC,
@@ -82,9 +83,9 @@ def resolve_low_level_dds(robot: str | None) -> LowLevelDDS:
             make_lowcmd=make_hg_lowcmd_msg,
             make_lowstate=unitree_hg_msg_dds__LowState_,
             has_mode_fields=True,  # whether need to set mode_pr and mode_machine
-            secondary_imu_topic=SECONDARY_IMU_TOPIC,
-            secondary_imu_type=HGIMUState_,
-            make_secondary_imu=unitree_hg_msg_dds__IMUState_,
+            secondary_imu_topic=SECONDARY_IMU_TOPIC if has_secondary_imu else None,
+            secondary_imu_type=HGIMUState_ if has_secondary_imu else None,
+            make_secondary_imu=unitree_hg_msg_dds__IMUState_ if has_secondary_imu else None,
         )
     else:
         raise ValueError(f"unknown robot name {robot_name!r}, cannot resolve low-level DDS")

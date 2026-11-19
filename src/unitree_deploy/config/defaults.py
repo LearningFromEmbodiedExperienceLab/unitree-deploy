@@ -36,7 +36,7 @@ ACC_SENSOR_NAMES = ("imu_lin_acc", "imu_acc")
 
 # ---------- DDS Topics ----------
 GO_ROBOTS = frozenset({"b2", "go2", "b2z1"})  # robots that use unitree_go_msg_dds__LowCmd_
-HG_ROBOTS = frozenset({"g1"})  # robots that use unitree_hg_msg_dds__LowCmd_
+HG_ROBOTS = frozenset({"as2", "g1"})  # robots that use unitree_hg_msg_dds__LowCmd_
 HG_MODE_PR = 0
 HG_MODE_MACHINE = 0
 

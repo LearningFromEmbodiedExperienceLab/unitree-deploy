@@ -1,0 +1,125 @@
+#
+# Vanilla PPO Rough Terrain Locomotion Policy
+#
+
+# ------------------------------------------------------------------------
+# Policy and timing
+robot: "as2"
+policy_path: "./policy_1000.onnx"
+policy_step_dt: 0.02
+physics_dt: 0.005
+decimation: 4
+runtime_command_dim: 3
+policy_input_name: obs
+policy_output_name: actions
+
+# ------------------------------------------------------------------------
+# Joint layout
+# Observation/action orders match training. SDK order matches motor indices.
+obs_joint_order: [
+  "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint", "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+  "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint", "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint"
+]
+sdk_joint_order: [
+  "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint", "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+  "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint", "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint"
+]
+# Default joint positions (rad), in sdk_joint_order.
+default_qpos: [
+  -0.0, 0.8, -1.5, 0.0, 0.8, -1.5,
+  -0.0, 1.0, -1.5, 0.0, 1.0, -1.5
+]
+
+# ------------------------------------------------------------------------
+# Observations
+# Terms are concatenated in this order; history_order controls frames within each term.
+obs_use_scaled_prev_action: false
+obs_prime_on_reset: true
+# term_major: each term's history; history_major: all terms per frame.
+obs_group_concat_mode: term_major
+observation_types:
+  base_lin_vel: unitree_deploy.obs.base_obs:BaseLinearVelocityObservation
+  base_ang_vel: unitree_deploy.obs.base_obs:BaseAngularVelocityObservation
+  projected_gravity: unitree_deploy.obs.base_obs:ProjectedGravityObservation
+  command: unitree_deploy.obs.base_obs:CommandObservation
+  joint_pos_rel: unitree_deploy.obs.base_obs:JointPositionObservation
+  joint_vel: unitree_deploy.obs.base_obs:JointVelocityObservation
+  prev_action: unitree_deploy.obs.base_obs:PreviousActionObservation
+observations:
+  - type: base_ang_vel
+    history_len: 5
+    history_order: oldest_first
+    # clip: [-10.0, 10.0]
+  - type: projected_gravity
+    history_len: 5
+    history_order: oldest_first
+    # clip: [-1.0, 1.0]
+  - type: command
+    history_len: 5
+    history_order: oldest_first
+    # clip: [-10.0, 10.0]
+    command_range:
+      - [-1.0, 1.5]
+      - [-0.6, 0.6]
+      - [-2.0, 2.0]
+  - type: joint_pos_rel
+    history_len: 5
+    history_order: oldest_first
+    # clip: [-10.0, 10.0]
+  - type: joint_vel
+    history_len: 5
+    history_order: oldest_first
+    # clip: [-50.0, 50.0]
+  - type: prev_action
+    history_len: 5
+    history_order: oldest_first
+    # clip: [-10.0, 10.0]
+
+# ------------------------------------------------------------------------
+# Actions
+# Joint targets = offset + scale * action. null disables action clipping.
+action_dim: 12
+action_clip: null
+action_joint_order: [
+  "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint", "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+  "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint", "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint"
+]
+# Per-joint action scales, in sdk_joint_order.
+action_scale: [
+  0.125, 0.25, 0.25, 0.125, 0.25, 0.25, 0.125, 0.25, 0.25, 0.125, 0.25, 0.25
+]
+# Position-target bounds (rad), in action_joint_order; applied after scaling and offset.
+action_target_clip:
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+  - [-10.0, 10.0]
+
+# ------------------------------------------------------------------------
+# PD gains
+# Gains and default_qpos use sdk_joint_order; action_target_clip uses action_joint_order.
+kp_policy: [
+  40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0
+]
+kd_policy: [
+  1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0
+]
+# Default-pose interpolation gains; exported from the training robot's nominal gains.
+kp_fixed_stand: [
+  40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0
+]
+kd_fixed_stand: [
+  1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0
+]
+# Damping-state gains; stiffness is zero in this state.
+kd_damping: [
+  3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0
+]

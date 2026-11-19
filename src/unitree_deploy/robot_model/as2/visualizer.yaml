@@ -1,0 +1,4 @@
+viewer:
+  camera:
+    lookat: [0.0, 0.0, 0.4]
+    track_body: base_link

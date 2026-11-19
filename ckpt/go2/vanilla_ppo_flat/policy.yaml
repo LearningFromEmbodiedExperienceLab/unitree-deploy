@@ -1,5 +1,5 @@
 #
-# Vanilla PPO Rough Terrain Locomotion Policy
+# Vanilla PPO Flat Terrain Locomotion Policy
 #
 
 policy_path: "./policy_2000_w_muon.onnx"
