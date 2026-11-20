@@ -245,6 +245,9 @@ The controller checks that the requested provider loads. Before using
 `tensorrt-fp16` on hardware, compare its actions against the CPU backend
 on the same observations.
 
+See the [TensorRT setup guide](README.tensorrt.md) for wheel installation,
+building from source on JetPack 5.1.1, and offline verification.
+
 ### Share RealSense on the same machine
 
 Capture shares the latest camera frame with Viser and policies via Linux shared memory.

@@ -178,6 +178,8 @@ unitree-controller --mode real --net <interface> --ckpt ckpt/g1/supermimic_lafan
 控制器会在启动时检查所选 provider 是否加载成功。真机使用 `tensorrt-fp16` 前，
 用同一组观测与 CPU 后端比较动作输出。
 
+Jetson Orin 的 wheel 安装、JetPack 5.1.1 源码构建和离线验证见 [TensorRT 配置指南](README.tensorrt.zh-CN.md)。
+
 ### Z1 阻抗控制器
 
 Z1 控制器复用 locomotion controller 的 `A`/`Start`/`X` 状态机操作：
