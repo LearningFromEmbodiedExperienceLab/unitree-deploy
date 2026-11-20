@@ -1,0 +1,13 @@
+sensor_class: "unitree_deploy.runtime.simulation.sensors.depth_camera:MujocoDepthSensor"
+params:
+  name: proof_loco_depth
+  body: base
+  position: [0.335, 0.015, 0.088]
+  rpy: [60, 0, -90]
+  width: 96
+  height: 54
+  fovy: 58.0
+  near: 0.1
+  far: 2.0
+  rate_hz: 20
+  debug_rgba: [0.8, 0.9, 0.3, 1.0]  # Frustum color (RGBA, 0–1)

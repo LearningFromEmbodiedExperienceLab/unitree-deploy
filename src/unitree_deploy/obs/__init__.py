@@ -7,6 +7,7 @@ from .base_obs import (
     ObservationBase,
     ObservationContext,
     ObservationGroup,
+    ObservationUnavailable,
     PreviousActionObservation,
     ProjectedGravityObservation,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "ObservationBase",
     "ObservationContext",
     "ObservationGroup",
+    "ObservationUnavailable",
     "PreviousActionObservation",
     "ProjectedGravityObservation",
 ]

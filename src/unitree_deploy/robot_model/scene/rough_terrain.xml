@@ -3,7 +3,12 @@
   <include file="origin_marker.xml"/>
 
   <worldbody>
-    <geom name="floor" size="0 0 0.05" friction="0.85 .1 .1" type="plane" material="rough_groundplane"/>
+    <light name="key_light" directional="true" diffuse="0.2 0.2 0.2" specular="0.05 0.05 0.05" pos="20 30 40" dir="-0.4 -0.6 -1" castshadow="false" cutoff="255"/>
+    <!-- <light name="fill_light" directional="true" diffuse="0.6 0.6 0.6" specular="0.02 0.02 0.02" pos="-2 3 3" dir="0.5 -0.5 -1" castshadow="false" cutoff="255"/> -->
+    <light name="rim_light" directional="true" diffuse="0.35 0.35 0.35" specular="0.01 0.01 0.01" pos="0 -4 3" dir="0 0.7 -1" castshadow="false" cutoff="255"/>
+    <light name="ambient_fill" directional="false" diffuse="0.4 0.4 0.4" specular="0 0 0" pos="0 0 3" castshadow="false" cutoff="255"/>
+    <geom name="floor" size="0 0 0.05" friction="0.75 .1 .1" type="plane" material="groundplane"/>
+
     <geom name="rough_block_01" type="box" size="0.22 0.45 0.035" pos="1.0 -0.45 0.035" friction="0.9 .1 .1" material="rough_block"/>
     <geom name="rough_block_02" type="box" size="0.18 0.34 0.055" pos="1.4 0.32 0.055" friction="0.9 .1 .1" material="rough_block"/>
     <geom name="rough_block_03" type="box" size="0.26 0.30 0.045" pos="1.9 -0.15 0.045" friction="0.9 .1 .1" material="rough_block"/>

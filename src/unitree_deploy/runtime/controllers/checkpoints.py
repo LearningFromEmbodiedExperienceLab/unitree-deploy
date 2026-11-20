@@ -9,7 +9,7 @@ from unitree_deploy.config.defaults import (
     RUN_POLICY_STATE,
     WIRELESS_REMOTE_BUTTON_BITS,
 )
-from unitree_deploy.policy.base_policy import BasePolicy, load_policy
+from unitree_deploy.policy.base_policy import BasePolicy, ExecutionProvider, load_policy
 from unitree_deploy.utils.yaml_utils import load_yaml
 
 
@@ -63,13 +63,16 @@ class PolicyManager:
         return self.profiles[self.active_name]
 
     @classmethod
-    def load(cls, ckpt_path: Path, multi_ckpt: Path | None = None, *, motion_path: Path | None = None) -> PolicyManager:
+    def load(
+        cls, ckpt_path: Path, multi_ckpt: Path | None = None, *,
+        motion_path: Path | None = None, providers: tuple[ExecutionProvider, ...] | None = None,
+    ) -> PolicyManager:
         ckpt_path = ckpt_path.expanduser().resolve()
         if multi_ckpt is None:
             policy_yaml_path = ckpt_path
             if ckpt_path.is_dir():
                 policy_yaml_path = ckpt_path / "policy.yaml"
-            profile = build_ckpt_profile("default", policy_yaml_path, motion_path=motion_path)
+            profile = build_ckpt_profile("default", policy_yaml_path, motion_path=motion_path, providers=providers)
             return cls(
                 {"default": profile},
                 "default",
@@ -78,7 +81,7 @@ class PolicyManager:
 
         multi_ckpt = multi_ckpt.expanduser().resolve()
         config = load_yaml(multi_ckpt)
-        profiles, default_name = load_multi_ckpt_profiles(multi_ckpt.parent, config)
+        profiles, default_name = load_multi_ckpt_profiles(multi_ckpt.parent, config, providers=providers)
         check_profile_compatibility(profiles)
         return cls(
             profiles,
@@ -102,7 +105,9 @@ class PolicyManager:
         return self.switch_to(order[(current_i + 1) % len(order)])
 
 
-def load_multi_ckpt_profiles(base_dir: Path, config: dict) -> tuple[dict[str, CkptProfile], str]:
+def load_multi_ckpt_profiles(
+    base_dir: Path, config: dict, *, providers: tuple[ExecutionProvider, ...] | None = None,
+) -> tuple[dict[str, CkptProfile], str]:
     ckpt_specs = config.get("ckpts")
     if not isinstance(ckpt_specs, dict) or not ckpt_specs:
         raise ValueError("multi-ckpt YAML must define a non-empty 'ckpts' mapping")
@@ -113,7 +118,7 @@ def load_multi_ckpt_profiles(base_dir: Path, config: dict) -> tuple[dict[str, Ck
     }
     default_name = str(config.get("default", next(iter(profile_paths))))
     profiles = {
-        name: build_ckpt_profile(name, policy_yaml_path)
+        name: build_ckpt_profile(name, policy_yaml_path, providers=providers)
         for name, policy_yaml_path in profile_paths.items()
     }
     return profiles, default_name
@@ -140,8 +145,18 @@ def resolve_policy_yaml(base_dir: Path, spec) -> Path:
     return path.resolve()
 
 
-def build_ckpt_profile(name: str, policy_yaml_path: Path, *, motion_path: Path | None = None) -> CkptProfile:
-    policy = load_policy(policy_yaml_path, motion_path=motion_path)
+def build_ckpt_profile(
+    name: str, policy_yaml_path: Path, *,
+    motion_path: Path | None = None, providers: tuple[ExecutionProvider, ...] | None = None,
+) -> CkptProfile:
+    policy = load_policy(policy_yaml_path, motion_path=motion_path, providers=providers)
+    if providers:
+        primary = providers[0]
+        if isinstance(primary, tuple):
+            primary = primary[0]
+        active = policy.session.get_providers()
+        if primary not in active:
+            raise RuntimeError(f"{policy_yaml_path}: {primary} did not initialize (active providers: {active})")
     imu_source = parse_imu_source(policy)
     sdk_joint_order = list(policy.sdk_joint_order)
     obs_joint_order = list(policy.obs_joint_order)

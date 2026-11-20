@@ -3,7 +3,7 @@
 Use mmap on /dev/shm so exiting a reader never unlinks the publisher's memory
 (including on Python 3.11/3.12, where SharedMemory readers are resource-tracked).
 
-Layout: [4-byte JSON length][JSON metadata][RGB uint8][optional depth float32].
+Layout: [4-byte JSON length][JSON metadata][optional RGB uint8][optional depth float32].
 A zero JSON length marks an empty or unfinished frame.
 """
 
@@ -37,18 +37,20 @@ def _frame_path(camera_name: str) -> Path:
 class RealSensePublisher:
     """One writer per camera name. Readers cannot block acquisition."""
 
-    def __init__(self, config: RealSenseCaptureConfig):
+    def __init__(self, config: RealSenseCaptureConfig, *, include_color: bool = True):
         self.config = config
         self.path = _frame_path(config.camera_name)
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.color_shape = (config.color_height, config.color_width, 3)
+        self.color_shape = (config.color_height, config.color_width, 3) if include_color else None
         self.depth_shape = None
         if config.enable_depth:
             if config.align_depth_to_color:
                 self.depth_shape = (config.color_height, config.color_width)
             else:
                 self.depth_shape = (config.depth_height, config.depth_width)
-        size = _LENGTH.size + _MAX_METADATA_BYTES + int(np.prod(self.color_shape))
+        size = _LENGTH.size + _MAX_METADATA_BYTES
+        if self.color_shape is not None:
+            size += int(np.prod(self.color_shape))
         if self.depth_shape is not None:
             size += int(np.prod(self.depth_shape)) * 4
         self._cleanup = ExitStack()
@@ -75,16 +77,18 @@ class RealSensePublisher:
             raise
 
     def publish(self, frame: RealSenseFrame) -> bool:
-        color = np.ascontiguousarray(frame.color, dtype=np.uint8)
+        color = np.ascontiguousarray(frame.color, dtype=np.uint8) if frame.color is not None else None
+        color_shape = None if color is None else color.shape
         depth = np.ascontiguousarray(frame.depth, dtype=np.float32) if frame.depth is not None else None
         depth_shape = None if depth is None else depth.shape
         if (frame.camera_name != self.config.camera_name
-                or color.shape != self.color_shape or depth_shape != self.depth_shape):
+                or color_shape != self.color_shape or depth_shape != self.depth_shape):
             raise ValueError("frame camera or image shapes differ from the capture config")
         metadata = json.dumps({
             "camera_name": frame.camera_name, "serial_number": frame.serial_number,
-            "color_shape": color.shape, "depth_shape": depth_shape,
+            "color_shape": color_shape, "depth_shape": depth_shape,
             "timestamp_sec": frame.timestamp_sec, "color_intrinsics": frame.color_intrinsics,
+            "depth_intrinsics": frame.depth_intrinsics,
             "published_at": time.monotonic(),
         }, allow_nan=False).encode()
         if len(metadata) > _MAX_METADATA_BYTES:
@@ -98,7 +102,8 @@ class RealSensePublisher:
             self._memory.seek(0)
             self._memory.write(_LENGTH.pack(0))  # Invalidate before writing, including if the writer crashes.
             self._memory.write(metadata)
-            self._memory.write(memoryview(color).cast("B"))
+            if color is not None:
+                self._memory.write(memoryview(color).cast("B"))
             if depth is not None:
                 self._memory.write(memoryview(depth).cast("B"))
             # Commit only after both images are complete.
@@ -119,11 +124,12 @@ class RealSenseReader:
     and close independently without affecting other readers or the camera.
     """
 
-    def __init__(self, camera_name: str, *, max_age: float = 0.5):
+    def __init__(self, camera_name: str, *, max_age: float = 0.5, include_color: bool = True):
         if not np.isfinite(max_age) or max_age <= 0:
             raise ValueError("max_age must be positive and finite")
         self.path = _frame_path(camera_name)
         self.max_age = max_age
+        self.include_color = include_color
         self._file = None
         self._memory = None
 
@@ -155,18 +161,24 @@ class RealSenseReader:
                 return None
 
             # Copy while holding the read lock, so policy preprocessing owns its arrays.
-            color = np.ndarray(metadata["color_shape"], dtype=np.uint8,
-                               buffer=self._memory, offset=offset).copy()
-            offset += color.nbytes
+            color = None
+            if metadata["color_shape"] is not None:
+                rgb = np.ndarray(metadata["color_shape"], dtype=np.uint8, buffer=self._memory, offset=offset)
+                if self.include_color:
+                    color = rgb.copy()
+                offset += rgb.nbytes
             depth = None
             if metadata["depth_shape"] is not None:
                 depth = np.ndarray(metadata["depth_shape"], dtype=np.float32,
                                    buffer=self._memory, offset=offset).copy()
             intrinsics = metadata["color_intrinsics"]
+            depth_intrinsics = metadata.get("depth_intrinsics")
             return RealSenseFrame(
                 camera_name=metadata["camera_name"], serial_number=metadata["serial_number"],
                 color=color, depth=depth, timestamp_sec=metadata["timestamp_sec"],
                 color_intrinsics=None if intrinsics is None else tuple(intrinsics),
+                depth_intrinsics=None if depth_intrinsics is None else tuple(depth_intrinsics),
+                published_at=metadata["published_at"],
             )
         finally:
             fcntl.flock(self._file, fcntl.LOCK_UN)

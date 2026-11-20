@@ -13,6 +13,8 @@ class RealSenseFrame:
     depth: np.ndarray | None  # float32 meters
     timestamp_sec: float | None  # SDK timestamp, not the host clock
     color_intrinsics: tuple[float, float, float, float] | None = None  # fx, fy, ppx, ppy
+    depth_intrinsics: tuple[float, float, float, float] | None = None
+    published_at: float | None = None  # Host monotonic timestamp from the shared stream
 
 
 @dataclass
@@ -71,10 +73,15 @@ class RealSenseCapture:
             self.color_intrinsics = (intrinsics.fx, intrinsics.fy, intrinsics.ppx, intrinsics.ppy)
             self.depth_scale = 1.0
             self.align = None
+            self.depth_intrinsics = None
             if config.enable_depth:
                 self.depth_scale = float(profile.get_device().first_depth_sensor().get_depth_scale())
                 if config.align_depth_to_color:
                     self.align = rs.align(rs.stream.color)
+                    self.depth_intrinsics = self.color_intrinsics
+                else:
+                    depth = profile.get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
+                    self.depth_intrinsics = (depth.fx, depth.fy, depth.ppx, depth.ppy)
         except BaseException:
             self.pipeline.stop()
             raise
@@ -102,6 +109,7 @@ class RealSenseCapture:
             depth=depth,
             timestamp_sec=float(frames.get_timestamp()) / 1000.0,
             color_intrinsics=self.color_intrinsics,
+            depth_intrinsics=self.depth_intrinsics,
         )
 
     def close(self) -> None:

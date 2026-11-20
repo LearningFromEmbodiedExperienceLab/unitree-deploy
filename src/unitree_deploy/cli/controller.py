@@ -2,11 +2,21 @@ import argparse
 from pathlib import Path
 
 from unitree_deploy.config.defaults import DEFAULT_MODE, DEFAULT_NET
+from unitree_deploy.policy.base_policy import ExecutionProvider
 from unitree_deploy.runtime.controllers.policy_controller import Controller, RuntimeConfig, console
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize
 
 
 def parse_args() -> RuntimeConfig:
+    backends: dict[str, tuple[ExecutionProvider, ...] | None] = {
+        "cpu": None,
+        "cuda": ("CUDAExecutionProvider",),
+        "tensorrt": ("TensorrtExecutionProvider", "CUDAExecutionProvider"),
+        "tensorrt-fp16": (
+            ("TensorrtExecutionProvider", {"trt_fp16_enable": "1"}),
+            "CUDAExecutionProvider",
+        ),
+    }
     parser = argparse.ArgumentParser(description="Reusable Unitree controller for sim or real robot.")
     parser.add_argument("--mode", choices=("real", "sim"), default=DEFAULT_MODE)
     parser.add_argument("--net", default=DEFAULT_NET, help="DDS network interface. Use lo for local sim.")
@@ -27,6 +37,10 @@ def parse_args() -> RuntimeConfig:
         help="Optional YAML state machine. Defaults to state_machine.yaml beside the ckpt or multi-ckpt YAML.",
     )
     parser.add_argument("--motion-path", type=Path, help="Local any4hdmi .npz reference for a compatible policy.")
+    parser.add_argument(
+        "--inference-backend", choices=tuple(backends), default="cpu",
+        help="ONNX Runtime policy inference backend (default: cpu).",
+    )
     args = parser.parse_args()
     if args.ckpt is None and args.multi_ckpt is None:
         parser.error("one of --ckpt or --multi-ckpt is required")
@@ -42,6 +56,7 @@ def parse_args() -> RuntimeConfig:
         multi_ckpt=args.multi_ckpt,
         state_machine=args.state_machine,
         motion_path=args.motion_path.expanduser().resolve() if args.motion_path is not None else None,
+        providers=backends[args.inference_backend],
     )
 
 

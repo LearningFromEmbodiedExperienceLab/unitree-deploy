@@ -4,6 +4,7 @@ import struct
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -35,6 +36,8 @@ from unitree_deploy.config.defaults import (
 )
 from unitree_deploy.robot_model.robot_config import RobotModel
 from unitree_deploy.runtime.timing import LoopTimer
+from unitree_deploy.utils.import_utils import import_symbol
+from unitree_deploy.utils.yaml_utils import load_yaml
 from .keyboard import KeyboardState, STICK_KEYS
 from unitree_sdk2py.core.channel import (
     ChannelPublisher,
@@ -81,6 +84,7 @@ class RuntimeConfig:
     band_sites: tuple[str, ...]
     band_enabled: bool
     video: VideoConfig | None = None
+    sensors: tuple[Path, ...] = ()
 
 
 def quat_to_rpy(q: np.ndarray) -> list[float]:
@@ -115,7 +119,19 @@ class SimBridge:
         self.lock = threading.Lock()
         self.cmd_lock = threading.Lock()
 
-        self.model = mujoco.MjModel.from_xml_path(str(self.config.robot.xml_path))
+        self.sensors = []
+        if not config.sensors:
+            self.model = mujoco.MjModel.from_xml_path(str(config.robot.xml_path))
+        else:
+            spec = mujoco.MjSpec.from_file(str(config.robot.xml_path))
+            for path in config.sensors:
+                sensor_path = path.expanduser().resolve()
+                sensor_config = load_yaml(sensor_path)
+                sensor_class = import_symbol(sensor_config["sensor_class"], sensor_path.parent)
+                sensor = sensor_class(**sensor_config.get("params", {}))
+                sensor.configure_model(spec)
+                self.sensors.append(sensor)
+            self.model = spec.compile()
         self.model.opt.timestep = 1.0 / SIM_HZ
         self.data = mujoco.MjData(self.model)
         self.policy_debug_viz = PolicyDebugViz(
@@ -136,7 +152,8 @@ class SimBridge:
             video=config.video,
             simulation_speed=lambda: self.simulation_speed,
             controller_state=self.viewer_controller_state,
-            scene_overlay=self.add_band_to_scene,
+            scene_overlay=self.add_scene_overlays,
+            image_overlays=self.sensor_images if self.sensors else None,
             set_sim_keyboard_enabled=self.keyboard.set_enabled,
         )
         self.num_motor = int(self.model.nu)
@@ -459,7 +476,7 @@ class SimBridge:
             with self.lock:
                 self.reset_sim()
         elif self.policy_debug_viz is not None and not repeat and self.policy_debug_viz.handle_key(key):
-            log(f"policy debug viz={'on' if self.policy_debug_viz.visible else 'off'}")
+            log(f"debug viz={'on' if self.policy_debug_viz.visible else 'off'}")
         elif key == "esc":
             self.close()
 
@@ -487,6 +504,24 @@ class SimBridge:
                 log(f"suspension bands restored at z={self.band_z:.3f} m")
             else:
                 log("suspension bands released")
+
+    def add_scene_overlays(self, scene: mujoco.MjvScene) -> None:
+        self.add_band_to_scene(scene)
+        debug_visible = self.policy_debug_viz.visible is not False
+        for sensor in self.sensors:
+            if not debug_visible:
+                continue
+            add_to_scene = getattr(sensor, "add_to_scene", None)
+            if add_to_scene is not None:
+                add_to_scene(self.model, self.data, scene)
+
+    def sensor_images(self) -> list[np.ndarray]:
+        images = []
+        for sensor in self.sensors:
+            image = getattr(sensor, "debug_image", None)
+            if image is not None:
+                images.append(image)
+        return images
 
     def add_band_to_scene(self, scene: mujoco.MjvScene) -> None:
         with self.lock:
@@ -702,18 +737,22 @@ class SimBridge:
 
     # ----- Simulation loop and cleanup -----
 
-    def simulate(self) -> None:
+    def simulate(self, sensors=()) -> None:
         timer = LoopTimer(1.0 / SIM_HZ)
         last_log = time.perf_counter()
         steps = 0
 
         while self.alive:
-            if not self.simulation_paused:
+            paused = self.simulation_paused
+            if not paused or sensors:
                 with self.lock:
-                    self.data.qfrc_applied[:] = 0.0
-                    self.apply_band()
-                    self.data.ctrl[:] = self.compute_ctrl()
-                    mujoco.mj_step(self.model, self.data)
+                    if not paused:
+                        self.data.qfrc_applied[:] = 0.0
+                        self.apply_band()
+                        self.data.ctrl[:] = self.compute_ctrl()
+                        mujoco.mj_step(self.model, self.data)
+                    for sensor in sensors:
+                        sensor.update(self.model, self.data, paused=paused)
 
             if not self.viewer_backend.sync():
                 self.alive = False
@@ -793,7 +832,7 @@ class SimBridge:
 
         self.state_thread.start()
         # Blocks until the selected viewer or simulation loop exits.
-        self.viewer_backend.run(self.simulate)
+        self.viewer_backend.run(lambda: self.simulate(self.sensors))
 
     def close(self, *_args) -> None:
         if self.alive:
@@ -807,6 +846,8 @@ class SimBridge:
 
     def cleanup(self) -> None:
         self.alive = False
+        for sensor in self.sensors:
+            sensor.close()
         for obj in (
             self.lowcmd_sub,
             self.controller_state_sub,

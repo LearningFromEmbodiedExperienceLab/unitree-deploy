@@ -1,0 +1,12 @@
+sensor_class: "unitree_deploy.runtime.simulation.sensors.height_scan:MujocoHeightScanSensor"
+params:
+  name: go2_height_scan
+  body: base
+  shape: [15, 11]  # X samples, Y samples
+  x_range: [-0.5, 1.0]  # Forward, meters
+  y_range: [-0.4, 0.4]  # Left, meters
+  start_z: 0.8
+  max_distance: 2.0
+  rate_hz: 20
+  geom_groups: [0]
+  debug_rgba: [0.1, 0.4, 0.8, 1.0]  # Hit point color (RGBA, 0–1)

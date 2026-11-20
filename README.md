@@ -233,6 +233,18 @@ environment.
     unitree-controller --mode real --net <interface> --ckpt ckpt/g1/vanilla_ppo_flat
     ```
 
+On Jetson Orin, use a GPU-enabled ONNX Runtime build compatible with your
+JetPack and Python versions. The controller defaults to `cpu` and also accepts
+`--inference-backend cuda`, `tensorrt`, or `tensorrt-fp16`.
+
+```bash
+unitree-controller --mode real --net <interface> --ckpt ckpt/g1/supermimic_lafan --inference-backend tensorrt
+```
+
+The controller checks that the requested provider loads. Before using
+`tensorrt-fp16` on hardware, compare its actions against the CPU backend
+on the same observations.
+
 ### Share RealSense on the same machine
 
 Capture shares the latest camera frame with Viser and policies via Linux shared memory.

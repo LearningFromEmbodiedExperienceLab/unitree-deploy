@@ -18,6 +18,7 @@ from unitree_deploy.config.defaults import (
     sim_key_for_button,
 )
 from unitree_deploy.obs.base_obs import ObservationContext
+from unitree_deploy.policy.base_policy import ExecutionProvider
 from unitree_deploy.robot_model.robot_config import DEFAULT_ROBOT
 from unitree_deploy.visualization.policy_debug_viz import POLICY_DEBUG_VIZ_TOPIC, policy_debug_viz_packet
 from unitree_deploy.utils.yaml_utils import load_yaml
@@ -60,6 +61,7 @@ class RuntimeConfig:
     multi_ckpt: Path | None = None
     state_machine: Path | None = None
     motion_path: Path | None = None
+    providers: tuple[ExecutionProvider, ...] | None = None
 
 
 class Controller:
@@ -72,7 +74,9 @@ class Controller:
     def __init__(self, config: RuntimeConfig):
         self.config = config
         self.ckpt_dir = config.ckpt_dir.expanduser().resolve()
-        self.policy_manager = PolicyManager.load(self.ckpt_dir, config.multi_ckpt, motion_path=config.motion_path)
+        self.policy_manager = PolicyManager.load(
+            self.ckpt_dir, config.multi_ckpt, motion_path=config.motion_path, providers=config.providers,
+        )
         if config.multi_ckpt is None:
             self.ckpt_dir = self.active_profile.policy_yaml_path.parent
         self.robot = config.robot or self.active_profile.policy.config.get("robot", DEFAULT_ROBOT)

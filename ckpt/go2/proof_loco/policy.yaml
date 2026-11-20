@@ -1,0 +1,67 @@
+robot: go2
+policy_class: "proof_loco_policy:ProofLocoPolicy"
+policy_path: actor.onnx
+depth_encoder_path: depth_encoder.onnx
+policy_input_name: obs
+policy_output_name: actions
+
+policy_step_dt: 0.02
+physics_dt: 0.002
+decimation: 10
+
+obs_joint_order: &joints [
+  FR_hip_joint, FR_thigh_joint, FR_calf_joint,
+  FL_hip_joint, FL_thigh_joint, FL_calf_joint,
+  RR_hip_joint, RR_thigh_joint, RR_calf_joint,
+  RL_hip_joint, RL_thigh_joint, RL_calf_joint,
+]
+sdk_joint_order: *joints
+action_joint_order: *joints
+default_qpos: [-0.1, 0.8, -1.5, 0.1, 0.8, -1.5, -0.1, 1.0, -1.5, 0.1, 1.0, -1.5]
+action_dim: 12
+action_clip: null
+target_q_clip: [-10.0, 10.0]
+action_scale: [0.125, 0.25, 0.25, 0.125, 0.25, 0.25, 0.125, 0.25, 0.25, 0.125, 0.25, 0.25]
+kp_policy: [25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25]
+kd_policy: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+kp_fixed_stand: [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50]
+kd_fixed_stand: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+obs_prime_on_reset: true
+obs_use_scaled_prev_action: false
+obs_group_concat_mode: term_major
+observation_types:
+  base_ang_vel: BaseAngularVelocityObservation
+  projected_gravity: ProjectedGravityObservation
+  command: CommandObservation
+  joint_pos_rel: JointPositionObservation
+  joint_vel: JointVelocityObservation
+  prev_action: PreviousActionObservation
+  depth: "proof_loco_observations:DepthImageObservation"
+
+observations:
+  - {type: base_ang_vel, history_len: 10}
+  - {type: projected_gravity, history_len: 10}
+  - type: command
+    history_len: 10
+    command_range: [[-0.5, 1.0], [-0.5, 0.5], [-1.2, 1.2]]
+  - {type: joint_pos_rel, history_len: 10}
+  - {type: joint_vel, history_len: 10}
+  - {type: prev_action, history_len: 10, clip: [-10.0, 10.0]}
+
+depth_observation:
+  type: depth
+  history_len: 2
+  params:
+    source_class: "unitree_deploy.runtime.transport.realsense:RealSenseReader"
+    source_params: {camera_name: proof_loco_depth, include_color: false}
+    max_age: 0.5
+    history_interval_sec: 0.1
+    width: 48
+    height: 27
+    fovx: 87.0
+    fovy: 58.0
+    crop: {top: 2, bottom: 2, left: 2, right: 2}
+    clip_range: [0.1, 2.0]
+    blur_sigma: 1.0
+    blur_radius: 1

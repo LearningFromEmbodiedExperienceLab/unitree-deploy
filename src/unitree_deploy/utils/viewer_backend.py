@@ -81,11 +81,13 @@ class MujocoViewerBackend:
         simulation_speed: Callable[[], float] | None = None,
         controller_state: Callable[[], str] | None = None,
         scene_overlay: Callable[[mujoco.MjvScene], None] | None = None,
+        image_overlays: Callable[[], list[np.ndarray]] | None = None,
         set_sim_keyboard_enabled: Callable[[bool], None] | None = None,
     ) -> None:
         self.model = model
         self.policy_debug_viz = policy_debug_viz
         self.scene_overlay = scene_overlay
+        self.image_overlays = image_overlays
         self.set_sim_keyboard_enabled = set_sim_keyboard_enabled
         self.data = data
         self.camera = camera
@@ -249,8 +251,27 @@ class MujocoViewerBackend:
                         self.policy_debug_viz.add_to_scene(self.viewer.user_scn)
                     if self.scene_overlay is not None:
                         self.scene_overlay(self.viewer.user_scn)
+            if self.image_overlays is not None:
+                self.update_image_overlays()
             self.viewer.sync()
         return True
+
+    def update_image_overlays(self) -> None:
+        viewport = self.viewer.viewport
+        margin = 12
+        offset = margin
+        overlays = []
+        for image in self.image_overlays():
+            height, width = image.shape[:2]
+            scale = min(3, (viewport.width - 2 * margin) // width,
+                        (viewport.height - offset - margin) // height)
+            if scale < 1:
+                break
+            rect = mujoco.MjrRect(viewport.left + margin, viewport.bottom + offset,
+                                  width * scale, height * scale)
+            overlays.append((rect, image.repeat(scale, axis=0).repeat(scale, axis=1)))
+            offset += rect.height + margin
+        self.viewer.set_images(overlays)
 
     def toggle_keyboard_help(self) -> None:
         self.keyboard_help_visible = not self.keyboard_help_visible
@@ -323,6 +344,7 @@ def create_viewer_backend(
     simulation_speed: Callable[[], float] | None = None,
     controller_state: Callable[[], str] | None = None,
     scene_overlay: Callable[[mujoco.MjvScene], None] | None = None,
+    image_overlays: Callable[[], list[np.ndarray]] | None = None,
     set_sim_keyboard_enabled: Callable[[bool], None] | None = None,
 ) -> ViewerBackend:
     camera = load_viewer_camera_config(robot)
@@ -339,6 +361,7 @@ def create_viewer_backend(
             simulation_speed=simulation_speed,
             controller_state=controller_state,
             scene_overlay=scene_overlay,
+            image_overlays=image_overlays,
             set_sim_keyboard_enabled=set_sim_keyboard_enabled,
         )
     raise ValueError(f"unsupported viewer backend: {viewer}")

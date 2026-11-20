@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 
 from unitree_deploy.config.defaults import DAMPING_STATE
+from unitree_deploy.obs import ObservationUnavailable
 from unitree_deploy.runtime.transport.reference_motion import MotionUnavailable
 from ..filters import TargetEMA
 from .base import ControllerState
@@ -69,6 +70,9 @@ class PolicyState(ControllerState):
             policy_target_q = profile.policy.compute_target_q(observation)
         except MotionUnavailable as exc:
             return self.on_motion_unavailable(controller, exc)
+        except ObservationUnavailable as exc:
+            controller.log(f"{exc}; returning to damping")
+            return self.next_for_button("X") or DAMPING_STATE
         # Smooth joint targets only; actor history and the motion cursor advance normally.
         waiting_for_ema = not self.has_reference or self.entry_ema.remaining
         reference_lost = getattr(profile.policy, "reference_lost", False)

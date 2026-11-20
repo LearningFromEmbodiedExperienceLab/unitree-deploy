@@ -25,6 +25,10 @@ def parse_args() -> RuntimeConfig:
     )
     parser.add_argument("--net", default=DEFAULT_NET, help="DDS network interface.")
     parser.add_argument(
+        "--sensor", type=Path, action="append", default=[],
+        help="YAML configuration for a simulation sensor plugin. Repeat for multiple sensors.",
+    )
+    parser.add_argument(
         "--viewer",
         choices=VIEWER_CHOICES,
         default=DEFAULT_VIEWER,
@@ -65,6 +69,7 @@ def parse_args() -> RuntimeConfig:
         band_sites=band_sites,
         band_enabled=bool(args.band),
         video=video,
+        sensors=tuple(args.sensor),
     )
 
 

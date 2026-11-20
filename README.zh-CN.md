@@ -131,6 +131,11 @@ unitree-visualizer --mode real --robot g1 --net eth0 --camera
 两端使用 `visualizer.yaml` 中相同的相机名。Policy 可通过
 `unitree_deploy.runtime.transport.realsense.RealSenseReader` 读取。
 
+<!-- [Go2 Proof-Loco checkpoint](ckpt/go2/proof_loco/README.md) 提供 WebDemo 模型、 -->
+<!-- MuJoCo 深度传感器和可更换的真机深度源，目录内有两种部署方式。 -->
+<!-- [Go2 height scan 插件](ckpt/go2/height_scan/README.md) 可从 MuJoCo 或真机建图进程 -->
+<!-- 读取地形网格，供使用 height scan 的策略接入。 -->
+<!--  -->
 回放已保存的轨迹，默认使用 Viser 前端：
 
 ```bash
@@ -161,6 +166,17 @@ web-policy --robot g1 --ckpt /home/syw/.gitrepos/unitree-deploy/ckpt/g1/vanilla_
 ```bash
 unitree-controller --mode real --net <interface> --ckpt ckpt/g1/vanilla_ppo_flat
 ```
+
+在 Jetson Orin 上，需要使用与 JetPack 和 Python 版本匹配、支持 GPU 的 ONNX Runtime。
+控制器默认使用 `cpu`，也可以通过 `--inference-backend` 选择
+`cuda`、`tensorrt` 或 `tensorrt-fp16`。
+
+```bash
+unitree-controller --mode real --net <interface> --ckpt ckpt/g1/supermimic_lafan --inference-backend tensorrt
+```
+
+控制器会在启动时检查所选 provider 是否加载成功。真机使用 `tensorrt-fp16` 前，
+用同一组观测与 CPU 后端比较动作输出。
 
 ### Z1 阻抗控制器
 

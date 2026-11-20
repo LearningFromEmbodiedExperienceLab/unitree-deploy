@@ -1,0 +1,9 @@
+cameras:
+  - camera_name: proof_loco_depth
+    color_width: 640
+    color_height: 480
+    depth_width: 640
+    depth_height: 480
+    fps: 30
+    enable_depth: true
+    align_depth_to_color: false

@@ -8,6 +8,10 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 
+class ObservationUnavailable(RuntimeError):
+    """A policy input is missing or too old to run inference."""
+
+
 @dataclass(frozen=True)
 class ObservationContext:
     """Control-step snapshot: joints in observation order, quaternion in wxyz order.

@@ -17,6 +17,7 @@ from ..obs.base_obs import (
 )
 
 ObservationRegistry: TypeAlias = Mapping[str, type[ObservationBase]]
+ExecutionProvider: TypeAlias = str | tuple[str, dict[str, str]]
 
 DEFAULT_POLICY_CLASS = "unitree_deploy.policy.base_policy:BasePolicy"
 
@@ -38,7 +39,7 @@ class BasePolicy:
         self,
         policy_yaml_path: str | Path,
         *,
-        providers: Sequence[str] | None = None,
+        providers: Sequence[ExecutionProvider] | None = None,
         observation_types: ObservationRegistry | None = None,
     ) -> None:
         self.policy_yaml_path = Path(policy_yaml_path).expanduser().resolve()
@@ -266,7 +267,7 @@ def _load_observation_types(
 def load_policy(
     policy_yaml_path: str | Path,
     *,
-    providers: Sequence[str] | None = None,
+    providers: Sequence[ExecutionProvider] | None = None,
     motion_path: Path | None = None,
 ) -> BasePolicy:
     """Load a policy from YAML, including optional user plugin modules.
